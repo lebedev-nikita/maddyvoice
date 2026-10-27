@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt, checkedFetch, Settings } from "./core.ts";
 import type { Job } from "./database.ts";
-import { portraitAttribution } from "./media.ts";
 import { captionText, topicTitle } from "./topic.ts";
 
 const Auth = Schema.Struct({
@@ -119,7 +118,7 @@ function legacyInitialTitle(job: Job) {
 
 export function videoMetadata(job: Job, privacy: "public" | "private" | "unlisted") {
   const caption = job.caption.replace(/[<>]/g, "").trim();
-  const suffix = `\n\nТелеграм-канал Мэддисона: https://t.me/${job.channel}\nОригинальное сообщение: ${job.source_url}\nДата и время публикации оригинального сообщения: ${job.published_at.replace("T", " ").replace(".000Z", " UTC")}\nНеофициальный архив голосовых сообщений.\n\n${portraitAttribution}\n\n${sourceMarker(job)}`;
+  const suffix = `\n\nТелеграм-канал Мэддисона: https://t.me/${job.channel}\nОригинальное сообщение: ${job.source_url}\nДата и время публикации оригинального сообщения: ${job.published_at.replace("T", " ").replace(".000Z", " UTC")}\n\n${sourceMarker(job)}`;
   let description = "";
   const budget = 5000 - Buffer.byteLength(suffix, "utf8");
   for (const character of caption) {
