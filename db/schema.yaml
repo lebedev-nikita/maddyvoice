@@ -45,13 +45,14 @@ tables:
       status: ENUM('pending', 'applied', 'manual', 'review') DEFAULT 'pending'
       transcript?: TEXT
       topic?: TEXT
-      generation_version: INTEGER DEFAULT 0
       title?: TEXT
       attempts: INTEGER DEFAULT 0
       next_attempt: INTEGER DEFAULT 0
       error?: TEXT
       created_at: TEXT
       updated_at: TEXT
+      generation_version: INTEGER DEFAULT 0
+      thumbnail_quote?: TEXT
 indexes:
   jobs_pending:
     type: regular
@@ -82,3 +83,6 @@ migrations:
   - version: "20261027000004"
     name: catchup_and_title_policy
     checksum: a05cf44464e1883fbd2c324b40e74e6219edd72ab0f14c127a3a682d3dace530
+  - version: "20261027000005"
+    name: thumbnail_quotes
+    checksum: 3d1df406a212d5f3e05c65d19d86df144920394b03af1ad1aded1ecb9aeaf81f

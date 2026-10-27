@@ -10,6 +10,7 @@ const TitleJob = Schema.Struct({
   status: Schema.Literals(["pending", "applied", "manual", "review"]),
   transcript: Schema.NullOr(Schema.String),
   topic: Schema.NullOr(Schema.String),
+  thumbnail_quote: Schema.NullOr(Schema.String),
   generation_version: Schema.BigInt,
   title: Schema.NullOr(Schema.String),
   attempts: Schema.BigInt,
@@ -156,7 +157,7 @@ const currentTopic = Effect.fn("currentTopic")(function* (
   const text = yield* readTranscript(item, job, now);
   if (!text) return;
   const topics = yield* Topics;
-  const topic = yield* topics.summarize(text, {
+  const { topic, thumbnailQuote } = yield* topics.summarize(text, {
     channel: job.channel,
     messageId: job.message_id.toString(),
     publishedAt: job.published_at,
@@ -164,9 +165,9 @@ const currentTopic = Effect.fn("currentTopic")(function* (
   // Retain the previous remote title until the write is confirmed.
   yield* runSql(
     "Save topic and discard transcript",
-    `UPDATE video_titles SET topic=?, generation_version=?,
+    `UPDATE video_titles SET topic=?, thumbnail_quote=?, generation_version=?,
       transcript=NULL, updated_at=? WHERE job_id=?`,
-    [topic, titleGenerationVersion, DateTime.formatIso(now), job.id],
+    [topic, thumbnailQuote, titleGenerationVersion, DateTime.formatIso(now), job.id],
   );
   return topic;
 });

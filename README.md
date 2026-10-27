@@ -276,6 +276,31 @@ command, separate from the production title worker.
 YouTube does not guarantee automatic captions. Until a usable Russian track is
 available, the video retains its initial caption/date title and the app retries.
 
+## Thumbnail quotes and PNGs
+
+New topic generations also select a one-to-four-word continuous excerpt of the
+original speech for a thumbnail. A separate model call checks the complete speech
+for meaning, tone and spoilers; gratitude should remain positive. Literal matching
+and word limits are enforced before approval. The topic and approved quote are
+saved together before the full transcript is discarded. Existing applied titles
+are preserved; `titles --regenerate` requests new metadata explicitly.
+
+To generate quotes from saved transcripts without changing YouTube, provide a
+JSON object with `rows`, each containing `video`, `originalTitle` and `transcript`:
+
+```sh
+bun scripts/+thumbnail-quotes.ts --source sources.json --output data/thumbnail-quotes
+bun scripts/+render-thumbnails.ts --quotes data/thumbnail-quotes/quotes.json --output data/thumbnails
+```
+
+The first command uses the production quote generator and independent review,
+saving each approved result and input/prompt hashes. It sends no expected answer
+to the model. The second renders 1280×720 PNGs with FFmpeg and the bundled Oswald
+font, without a browser. FFmpeg needs `drawtext` and `geq`; select a suitable build
+with `FFMPEG_PATH`. Rendering is sequential and limits FFmpeg to two threads.
+These commands create local files; uploading thumbnails is a separate operation.
+Generated quotes, PNGs and archives belong under the ignored `data/` directory.
+
 ## Storage and recovery
 
 BoxDB stores the queue and live cursor in `data/maddyvoice.db` using binary WAL

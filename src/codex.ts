@@ -9,7 +9,9 @@ import {
   TopicRequest,
   Transcript,
   type TopicSource,
+  type GeneratedTopic,
 } from "./topic.ts";
+import { ThumbnailQuotes } from "./thumbnail-quote.ts";
 import { CommentTopics, finalizeCommentTopic } from "./comment-topics.ts";
 import { TelegramComments } from "./telegram-comments.ts";
 import { codexCommand, codexSettings, commandJson } from "./commands.ts";
@@ -26,7 +28,7 @@ export class CodexTopics extends Context.Service<
   CodexTopics,
   {
     readonly model: string;
-    summarize(text: string, source: TopicSource): Effect.Effect<string, AppError>;
+    summarize(text: string, source: TopicSource): Effect.Effect<GeneratedTopic, AppError>;
   }
 >()("maddyvoice/CodexTopics") {
   static readonly layer = Layer.effect(
@@ -35,6 +37,7 @@ export class CodexTopics extends Context.Service<
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const commentsReader = yield* TelegramComments;
       const commentTopics = yield* CommentTopics;
+      const thumbnailQuotes = yield* ThumbnailQuotes;
       const { binary, model } = yield* codexSettings;
       const peopleFile = yield* Config.String("PEOPLE_FILE").pipe(Config.withDefault(Paths.people));
       const directory = yield* Config.String("TOPICS_DATA_DIR").pipe(
@@ -129,9 +132,11 @@ export class CodexTopics extends Context.Service<
               finalizeCommentTopic(result.draft, text, candidates),
             ).pipe(Effect.catch(() => Effect.succeed(undefined)));
           });
-          return yield* reviewedTopic(text, generate, (speech, topic) =>
+          const topic = yield* reviewedTopic(text, generate, (speech, topic) =>
             commentTopics.verify(speech, topic),
           );
+          const thumbnailQuote = yield* thumbnailQuotes.generate(text);
+          return { topic, thumbnailQuote };
         },
         Effect.timeout(topicGenerationTimeoutMs),
         Effect.mapError((error) =>
