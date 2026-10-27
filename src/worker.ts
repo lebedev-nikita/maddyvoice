@@ -3,7 +3,14 @@ import { AppError, attempt, json, safeMessage, Settings } from "./core.ts";
 import { getCursor, listJobs, runSql, savePosts, type Job } from "./database.ts";
 import { fingerprint, Media } from "./media.ts";
 import { Telegram, type Post } from "./telegram.ts";
+import {
+  assertPublicationHead,
+  completePublication,
+  nextPublication,
+  resumePublication,
+} from "./publication.ts";
 import { UploadReview, YouTube } from "./youtube.ts";
+import { randomUUID } from "node:crypto";
 
 export const poll = Effect.fn("poll")(function* () {
   const telegram = yield* Telegram;
@@ -64,19 +71,47 @@ export const importHistory = Effect.fn("importHistory")(function* (
   until: string | undefined,
   months: number,
 ) {
-  const telegram = yield* Telegram;
   const now = yield* DateTime.now;
   const range = yield* attempt("Validate history interval", async () =>
     dateRange(since, until, months, now),
   );
+  return yield* scanHistory(range);
+});
+
+export const importCatchup = Effect.fn("importCatchup")(function* (
+  days: number,
+  allowOutOfOrder: boolean,
+) {
+  if (!allowOutOfOrder || !Number.isInteger(days) || days < 1 || days > 31)
+    return yield* new AppError({
+      message: "Catch-up requires --allow-out-of-order and --days from 1 to 31",
+    });
+  const now = yield* DateTime.now;
+  const range = {
+    from: DateTime.formatIso(DateTime.add(now, { days: -days })),
+    to: DateTime.formatIso(now),
+  };
+  return yield* scanHistory(range, randomUUID());
+});
+
+const scanHistory = Effect.fn("scanHistory")(function* (
+  range: { from: string; to: string },
+  catchupId?: string,
+) {
+  const telegram = yield* Telegram;
   yield* Effect.logInfo(`Importing [${range.from}, ${range.to})`);
   let before: number | undefined;
-  let total = 0;
+  const posts: Post[] = [];
   for (let count = 0; count < 2000; count++) {
     const page = yield* telegram.page(before);
-    const eligible = page.posts.filter((post) => post.date >= range.from && post.date < range.to);
-    total += yield* savePosts(eligible, "history");
+    posts.push(...page.posts.filter((post) => post.date >= range.from && post.date < range.to));
     if (page.posts.some((post) => post.date < range.from) || page.before === undefined) {
+      const total = yield* savePosts(
+        posts,
+        "history",
+        undefined,
+        catchupId ? { id: catchupId, ...range } : undefined,
+      );
       yield* Effect.logInfo(`History imported: ${total} new recording(s); live cursor unchanged`);
       return total;
     }
@@ -86,17 +121,9 @@ export const importHistory = Effect.fn("importHistory")(function* (
     yield* Effect.sleep("300 millis");
   }
   return yield* new AppError({
-    message:
-      "History exceeded 2000 pages; rerun with a narrower date interval. Already queued jobs are preserved.",
+    message: "History exceeded 2000 pages; use a narrower interval. No partial import was queued.",
   });
 });
-
-const markUploaded = (id: string, videoId: string, now: string) =>
-  runSql(
-    "Save YouTube video ID",
-    "UPDATE jobs SET status='uploaded', youtube_id=?, upload_session=NULL, error=NULL, updated_at=? WHERE id=?",
-    [videoId, now, id],
-  );
 
 const ensureRendered = Effect.fn("ensureRendered")(function* (job: Job, now: string) {
   if (job.video_path) return job;
@@ -141,32 +168,33 @@ export const processJob = Effect.fn("processJob")(function* (
   initial: Job,
   privacy?: "private" | "public" | "unlisted",
 ) {
+  const current = yield* assertPublicationHead(initial.id);
   const config = yield* Settings;
+  const target = current.publication_privacy ?? current.upload_privacy ?? privacy ?? config.privacy;
+  if (privacy === "private" && target !== "private")
+    return yield* new AppError({
+      message: "This job was committed for non-private publication; resume without --test",
+    });
+  if (current.youtube_id) return yield* completePublication(current);
   const client = yield* (yield* YouTube).load();
   const now = DateTime.formatIso(yield* DateTime.now);
-  if (privacy === "private" && initial.upload_session && initial.upload_privacy !== "private") {
-    return yield* new AppError({
-      message:
-        "This session was started with non-private visibility. Resume without --test or review it in YouTube Studio.",
-    });
-  }
   yield* runSql(
     "Count upload attempt",
-    "UPDATE jobs SET attempts=attempts+1, error=NULL, updated_at=? WHERE id=?",
-    [now, initial.id],
+    "UPDATE jobs SET attempts=attempts+1, publication_privacy=?, error=NULL, updated_at=? WHERE id=?",
+    [target, now, current.id],
   );
-  const job = yield* ensureRendered(initial, now);
+  const job = { ...(yield* ensureRendered(current, now)), publication_privacy: target };
   const { videoPath, size } = yield* verifyRendered(job);
   let session = job.upload_session;
   if (!session) {
     session = yield* attempt("Start resumable YouTube upload", (signal) =>
-      client.start(job, privacy ?? config.privacy, signal),
+      client.start(job, "private", signal),
     );
     // This commit must precede every request that sends video bytes.
     yield* runSql(
       "Persist upload session",
       "UPDATE jobs SET status='uploading', upload_session=?, upload_privacy=?, updated_at=? WHERE id=?",
-      [session, privacy ?? config.privacy, now, job.id],
+      [session, "private", now, job.id],
     );
   }
   const sessionUrl = session;
@@ -186,36 +214,51 @@ export const processJob = Effect.fn("processJob")(function* (
       message: safeMessage(outcome.failure),
     });
   }
-  yield* markUploaded(job.id, outcome.success, now);
-  yield* Effect.logInfo(`Uploaded ${job.id}: https://youtu.be/${outcome.success}`);
+  yield* runSql(
+    "Persist accepted private upload",
+    `UPDATE jobs SET status='uploading', youtube_id=?,
+    upload_session=NULL, updated_at=? WHERE id=?`,
+    [outcome.success, DateTime.formatIso(yield* DateTime.now), job.id],
+  );
+  return yield* completePublication({ ...job, youtube_id: outcome.success, upload_session: null });
 });
 
 export const drainQueue = Effect.fn("drainQueue")(function* (limit: number, testMode = false) {
   const youtube = yield* YouTube;
   const client = yield* youtube.load();
   yield* attempt("Verify destination YouTube channel", (signal) => client.verifyChannel(signal));
-  const now = DateTime.toEpochMillis(yield* DateTime.now);
-  const eligible = (yield* listJobs())
-    .filter(
-      (job) =>
-        job.status !== "uploaded" && job.status !== "review" && job.next_attempt <= BigInt(now),
-    )
-    .slice(0, limit);
-  for (const job of eligible) {
-    yield* processJob(job, testMode ? "private" : undefined).pipe(
-      Effect.catch(
-        Effect.fn(function* (error: AppError) {
-          const delay = Math.min(24 * 3600_000, 60_000 * 2 ** Math.min(Number(job.attempts), 10));
-          yield* runSql("Save upload error", "UPDATE jobs SET error=?, next_attempt=? WHERE id=?", [
-            error.message,
-            now + delay,
-            job.id,
-          ]);
-          yield* Effect.logError(`${job.id}: ${error.message}; retry scheduled`);
-        }),
-      ),
-    );
+  for (let completed = 0; completed < limit; completed++) {
+    const job = yield* nextPublication();
+    if (!job) return;
+    if (job.status === "review") {
+      yield* Effect.logWarning(`${job.id}: publication queue blocked for review`);
+      return;
+    }
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    if (job.next_attempt > BigInt(now)) return;
+    const result = yield* processJob(job, testMode ? "private" : undefined).pipe(Effect.result);
+    if (result._tag === "Success") {
+      if (!result.success) return;
+      continue;
+    }
+    const failedAt = DateTime.toEpochMillis(yield* DateTime.now);
+    const delay = Math.min(24 * 3600_000, 60_000 * 2 ** Math.min(Number(job.attempts), 10));
+    yield* runSql("Save upload error", "UPDATE jobs SET error=?, next_attempt=? WHERE id=?", [
+      result.failure.message,
+      failedAt + delay,
+      job.id,
+    ]);
+    yield* Effect.logError(`${job.id}: ${result.failure.message}; later recordings remain blocked`);
+    return;
   }
+});
+
+export const scanAndPublish = Effect.fn("scanAndPublish")(function* (
+  limit: number,
+  testMode = false,
+) {
+  yield* poll();
+  yield* drainQueue(limit, testMode);
 });
 
 export const previewPost = Effect.fn("previewPost")(function* (messageId: number) {
@@ -234,13 +277,15 @@ export const previewPost = Effect.fn("previewPost")(function* (messageId: number
 });
 
 export const resolveJob = Effect.fn("resolveJob")(function* (key: string, videoId: string) {
-  const job = (yield* listJobs()).find((item) => item.id === key);
+  const jobs = yield* listJobs();
+  const job = jobs.find((item) => item.id === key);
   if (!job) return yield* new AppError({ message: "Job not found" });
-  const client = yield* (yield* YouTube).load();
-  yield* attempt("Verify existing YouTube video", (signal) =>
-    client.verifyVideo(job, videoId, signal),
-  );
-  yield* markUploaded(key, videoId, DateTime.formatIso(yield* DateTime.now));
+  if (job.status === "uploaded")
+    return yield* new AppError({ message: "Job is already published" });
+  const head = jobs.find((item) => item.status !== "uploaded");
+  if (head?.id !== job.id)
+    return yield* new AppError({ message: "Reconcile the earliest unfinished recording first" });
+  return yield* resumePublication(job, videoId);
 });
 
 export const retryJob = Effect.fn("retryJob")(function* (key: string, allowNew: boolean) {
@@ -253,10 +298,15 @@ export const retryJob = Effect.fn("retryJob")(function* (key: string, allowNew: 
         "Inspect YouTube Studio first. Use resolve if uploaded; otherwise pass --allow-new-upload to explicitly authorize a new upload.",
     });
   }
+  if (allowNew && job.youtube_id)
+    return yield* new AppError({
+      message:
+        "A YouTube video ID is already recorded; inspect and resolve that video instead of creating a duplicate",
+    });
   if (allowNew) {
     yield* runSql(
       "Authorize new upload",
-      "UPDATE jobs SET status='pending', next_attempt=0, error=NULL, upload_session=NULL, upload_privacy=NULL, video_path=NULL, video_sha256=NULL, video_size=NULL WHERE id=?",
+      "UPDATE jobs SET status='pending', next_attempt=0, error=NULL, upload_session=NULL, upload_privacy=NULL, publication_privacy=NULL, video_path=NULL, video_sha256=NULL, video_size=NULL WHERE id=?",
       [key],
     );
     return;

@@ -21,6 +21,7 @@ export const Paths = {
   portrait: fileURLToPath(new URL("../assets/ilya-maddyson.jpg", import.meta.url)),
   migrations: fileURLToPath(new URL("../db/migrations", import.meta.url)),
   topicSchema: fileURLToPath(new URL("../assets/topic.schema.json", import.meta.url)),
+  people: fileURLToPath(new URL("../assets/people.json", import.meta.url)),
 };
 
 export class Settings extends Context.Service<

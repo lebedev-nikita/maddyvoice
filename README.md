@@ -75,13 +75,30 @@ bun run cli upload --limit 1 --test         # upload one queued video privately
 bun run cli run --once --limit 10           # one scan and up to 10 uploads
 ```
 
-Dates are UTC; `--until` includes that whole day. `history` queues recordings;
-the running worker publishes them, or use `upload` after stopping the worker.
-Repeated history imports do not duplicate jobs or videos. The live worker uses
-a process lock; history imports and status reads can run alongside it. A test
-upload counts as uploaded and will not automatically be republished publicly.
-Existing upload sessions retain their initial visibility; `--test` refuses to
-resume a session started with non-private visibility.
+Dates are UTC; `--until` includes that whole day. Stop the worker before `history`
+or `upload`. A history scan is committed atomically after every page succeeds;
+repeated imports preserve the live cursor and do not duplicate recordings.
+Status reads can run alongside the worker. `upload` refreshes Telegram first and
+does not publish if that scan fails.
+
+Recordings publish in Telegram message-ID and audio-index order. An earlier
+recording in backoff, processing or review blocks every later one. Uploads start
+privately; the worker saves the video ID, waits for processing, then confirms the
+requested visibility before advancing. Publication retries inspect the same
+video. Test uploads keep private visibility after restarts.
+
+Import older history before publishing newer recordings: a new recording older
+than a completed or potentially visible release is rejected. This includes a
+release whose response might have been lost. Existing inconsistent queue rows
+enter review. Previously public resumable sessions also require reconciliation
+before the new publisher can continue.
+
+For an explicitly authorized exception, stop the worker and run
+`bun run cli catch-up --days 14 --allow-out-of-order --limit 100`.
+It completes the history scan before queuing missing recordings and preserves
+the live cursor. Only recordings in this batch may cross the existing publication
+boundary; subsequent recordings retain normal ordering. Repeated runs preserve
+existing video IDs and upload sessions. This does not reorder existing videos.
 
 On macOS, install the background worker:
 
@@ -99,29 +116,107 @@ voice posts and logs the missing setup. Reinstall after changing `.env` settings
 to refresh launchd's environment. Logs are in `data/worker.log`; `stop` lasts until
 the next login, while `uninstall` also removes the LaunchAgent. On an always-on
 Linux host, run `bun start` under your normal process manager. The production
-Raspberry Pi uses the [systemd deployment](deploy/README.md).
+Raspberry Pi uses the [manual SSH deployment](deploy/README.md), which covers
+both systemd services, updates, data preservation and recovery. GitHub Actions
+checks pushes and pull requests; it does not deploy to the Pi.
 
 ## Topic titles from YouTube captions
 
 With `TOPICS_URL=http://127.0.0.1:11435`, the worker names uploaded videos as
-`<Short topic> | Мэддисон`. Original publication dates stay in the description.
-It waits at least 15 minutes for serving
+`Мэддисон <action and topic>`, without a trailing signature. Original publication
+dates stay in the description.
+Titles use a short direct action or `Мэддисон о <topic>`, without introductory
+phrases such as “tells how”. They name the situation without revealing a punchline,
+unexpected comparison result or story ending. The independent review checks
+these editorial rules as well as factual support.
+It waits at least one hour after the original Telegram post before reading
+comments or generating a topic, and at least 15 minutes after upload for serving
 Russian captions, preferring YouTube's automatic ASR track. Captions are fetched
 through the official authenticated API, not a public transcript scraper.
 
-Run the topic service separately under an account already logged into Codex:
+Run the topic service separately under an account already logged into Codex and
+`tg`. Select its existing Telegram profile explicitly:
 
 ```sh
 codex login status
+export TG_PROFILE=personal
 bun run topics
 ```
 
-It uses `gpt-6-luna` through the saved Codex ChatGPT login, with no transcription
-API key. This uses that account's Codex limits. The transcript is sent to OpenAI;
+It uses `gpt-6.1-sol` for nickname extraction, titles and independent review,
+through the saved Codex ChatGPT login, with no transcription
+API key. This uses that account's Codex limits. The transcript and selected comment
+bodies are sent to OpenAI;
 YouTube credentials and upload session URLs are excluded. Codex receives an empty
 workspace, a read-only sandbox, disabled shell/browser/app tools, and a required
 JSON response schema. Its user configuration and persistent session history are
 not loaded. The topic endpoint listens only on `127.0.0.1:11435`.
+
+After the hour has passed, the topic service verifies the source post's ID and
+publication time through `tg`, then reads its earliest 500 comments, or all
+available comments if fewer. It does not wait for 500 comments. Since `tg` pages
+from newest to oldest, the reader walks to the beginning of the thread before
+selecting the first 500; an incomplete scan is retried. Empty bodies count toward
+the limit but are excluded from model input. Commenter names and usernames are
+discarded.
+
+Codex extracts nickname candidates in batches of up to 100 comment bodies.
+Candidates need literal quoted evidence in at least two distinct comment bodies;
+copied bodies count once. A fresh model call combines candidates with the captions
+to produce the topic, with a speech quote and supporting comment IDs for each
+adopted nickname. This path has no web search or people registry.
+Only literal comment spellings count toward candidate support; common Russian
+case forms are allowed when placing that supported nickname in a title.
+Comments help identify people and spell nicknames; the speech remains the source for the topic
+and claims. Raw comments are not stored by the application.
+
+Before saving a topic, a separate isolated model call checks its meaning against
+the complete speech transcript. It sees only the transcript and final title,
+without comments, generation evidence or previous verdicts. Each approved claim
+requires an exact speech quote. An unsupported meaning triggers a fresh generation,
+up to three attempts; the rejection is not fed back as a suggested answer.
+Invalid draft structure or reviewer evidence also refuses approval and counts
+toward this limit. Repeated nickname candidates are merged without counting the
+same comment twice. Model transport and usage errors use the normal retry queue.
+If no topic passes, the title stays queued for the existing retry schedule.
+This check also applies to topics generated through the registry fallback.
+`TOPIC_MODEL`, `TOPIC_EXTRACT_MODEL` and `TOPIC_REVIEW_MODEL` configure the three
+roles. The reviewer uses medium reasoning; extraction and generation use low
+reasoning, and every call starts an isolated session.
+
+Titles should name internet personalities when they are the main subject. If
+comments are closed, empty or contain no supported candidates, the existing
+registry generator is used. Telegram read failures leave the title queued instead
+of triggering that fallback. In the registry path, Codex can use web search to
+check uncertain nicknames against official profiles and
+channels, using only the nickname and minimal context in queries. Search results
+may clarify identity and spelling; the transcript remains the source for the
+topic and claims. Ambiguous identities are omitted rather than guessed.
+
+Confirmed spellings and contextual ASR aliases live in `assets/people.json`.
+Set `PEOPLE_FILE` to a writable copy to maintain the registry separately from
+deployments. It is validated and reloaded for every request, without a service
+restart. The initial entry is Зио, confirmed by the user; the short alias Зи
+requires a contextual hint from the same transcript quote. Aliases are never
+globally replaced in transcripts. The app supplies matching transcript quotes,
+Codex selects registry IDs, and the app inserts canonical nicknames into
+`Мэддисон о <Names>: <topic>` titles. Without selected names it uses
+`Мэддисон о <topic>`.
+Unknown, ambiguous or unsupported IDs and duplicated author names are rejected.
+
+New names are collected automatically as unconfirmed proposals under
+`TOPICS_DATA_DIR/people-candidates/`, with a short transcript quote, suggested
+spelling and any profile links found by Codex. Repeated identical proposals reuse
+the same file. These files retain excerpts after the full transcript is discarded;
+delete reviewed proposals when no longer needed. Source links are research leads,
+not verified evidence. Review them against official profiles and the recording
+before adding an entry or alias to `PEOPLE_FILE`, including `sources` and
+`verifiedAt`. Keep short or ambiguous aliases conditional on distinguishing
+context. In the registry path, unconfirmed names are excluded until reviewed;
+the generator continues using a specific topic without the name. Comment-supported
+names can be used without adding a registry entry. A review is
+needed only for new identities or aliases, not for each video. The service never
+rewrites confirmed entries from its own guesses.
 
 Title processing runs independently of live polling and uploads. Missing captions
 and temporary model failures use persisted retry delays. At most twelve caption
@@ -139,9 +234,37 @@ Stop the worker before manually processing existing videos:
 
 ```sh
 bun run cli titles --limit 10
-bun run cli titles --limit 10 --now  # ignore retry times; still respects daily quota
+bun run cli titles --limit 10 --now  # ignores retries; still respects the hour and daily quota
 bun run cli status                 # includes title states and errors
 ```
+
+To test comment-assisted titles without changing YouTube, use an existing `tg`
+login and a UTF-8 speech transcript:
+
+```sh
+cat transcript.txt | bun scripts/+comment-title-check.ts \
+  --profile personal --channel @maddysontg --post POST_ID \
+  --transcript /dev/stdin --output data/comment-title-check.json --repetitions 3
+```
+
+The experiment reads at most 100 comments and refuses incomplete threads.
+Only comment bodies are passed to extraction; author metadata is discarded.
+Candidates need exact supporting quotes, and at least two distinct comment
+bodies before title generation can use them. Each generation and semantic check gets a fresh Codex
+session with no web search, repository access, people registry or conversation
+history. Transcript-only and candidate-assisted runs use the same title prompt.
+Input and prompt hashes are recorded before model calls; a report path cannot be
+reused. Raw comments and transcripts stay in memory. Reports contain candidate
+names, evidence IDs, rejection counts and all title outcomes, including the
+original generated titles, independent semantic verdicts and validation errors.
+Reports retain the short speech quotes cited by the reviewer.
+The experiment uses the production finalization and review logic, including at
+most three generations after semantic rejections. No expected title or prior
+review is passed to either model. Use
+`--source-video VIDEO_ID` to record transcript provenance without passing the
+video ID to the model.
+No expected answer is sent to either model stage. This is an experimental
+command, separate from the production title worker.
 
 YouTube does not guarantee automatic captions. Until a usable Russian track is
 available, the video retains its initial caption/date title and the app retries.

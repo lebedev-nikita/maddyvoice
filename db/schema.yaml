@@ -25,6 +25,8 @@ tables:
       created_at: TEXT
       updated_at: TEXT
       upload_privacy?: ENUM('private', 'public', 'unlisted')
+      publication_privacy?: ENUM('private', 'public', 'unlisted')
+      catchup_batch?: TEXT
     constraints:
       - unique: [channel, message_id, audio_index]
   sources:
@@ -43,6 +45,7 @@ tables:
       status: ENUM('pending', 'applied', 'manual', 'review') DEFAULT 'pending'
       transcript?: TEXT
       topic?: TEXT
+      generation_version: INTEGER DEFAULT 0
       title?: TEXT
       attempts: INTEGER DEFAULT 0
       next_attempt: INTEGER DEFAULT 0
@@ -73,3 +76,9 @@ migrations:
   - version: "20261027000002"
     name: video_titles
     checksum: 5ae1ac82051b91701bcdd106f48300bd52a8e2e39bc8cb046ecec5c4f91f299c
+  - version: "20261027000003"
+    name: ordered_publication
+    checksum: 46aad08ea487c9d56b284d843dd459ea7ca16b2e2d1175898f37fa9e20fcba4c
+  - version: "20261027000004"
+    name: catchup_and_title_policy
+    checksum: a05cf44464e1883fbd2c324b40e74e6219edd72ab0f14c127a3a682d3dace530

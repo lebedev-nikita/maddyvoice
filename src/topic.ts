@@ -1,18 +1,20 @@
 import { load } from "cheerio";
-import { Config, Context, Effect, Layer, Schema } from "effect";
+import { Config, Context, DateTime, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
 
+export const titleGenerationVersion = 1;
+
 export function topicTitle(topic: string) {
-  const suffix = " | Мэддисон";
+  const prefix = "Мэддисон ";
   const clean =
     topic
       .replace(/[<>\r\n]/g, " ")
       .replace(/\s+/g, " ")
       .trim() || "Голосовое сообщение";
   const [first, ...rest] = Array.from(clean);
-  const text = (first ?? "").toLocaleUpperCase("ru-RU") + rest.join("");
-  const budget = 100 - Array.from(suffix).length;
-  return Array.from(text).slice(0, budget).join("").trim() + suffix;
+  const text = (first ?? "").toLocaleLowerCase("ru-RU") + rest.join("");
+  const budget = 100 - Array.from(prefix).length;
+  return prefix + Array.from(text).slice(0, budget).join("").trim();
 }
 
 export function captionText(srt: string) {
@@ -44,6 +46,17 @@ const Topic = Schema.Struct({
 export const Transcript = Schema.Struct({
   text: Schema.String.check(Schema.isMinLength(10), Schema.isMaxLength(200_000)),
 });
+const TopicSource = Schema.Struct({
+  channel: Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/)),
+  messageId: Schema.String.check(Schema.isPattern(/^[1-9]\d*$/)),
+  publishedAt: Schema.String,
+});
+export type TopicSource = typeof TopicSource.Type;
+export const TopicRequest = Schema.Struct({ text: Transcript.fields.text, source: TopicSource });
+
+export function commentsReadyAt(publishedAt: string) {
+  return DateTime.toEpochMillis(DateTime.add(DateTime.makeUnsafe(publishedAt), { hours: 1 }));
+}
 
 export function validateTopic(value: unknown) {
   const { topic } = Schema.decodeUnknownSync(Topic)(value);
@@ -53,6 +66,7 @@ export function validateTopic(value: unknown) {
     .trim();
   if (!/[а-яё]/i.test(clean) || /голосовое сообщение|обсуждение разных тем/i.test(clean))
     throw new Error("Model returned a vague or non-Russian topic");
+  if (/м[эе]дд?исон|maddyson/i.test(clean)) throw new Error("Topic repeats the author's name");
   return clean;
 }
 
@@ -60,7 +74,7 @@ export class Topics extends Context.Service<
   Topics,
   {
     readonly enabled: boolean;
-    summarize(text: string): Effect.Effect<string, AppError>;
+    summarize(text: string, source: TopicSource): Effect.Effect<string, AppError>;
   }
 >()("maddyvoice/Topics") {
   static readonly layer = Layer.effect(
@@ -71,10 +85,10 @@ export class Topics extends Context.Service<
         return yield* new AppError({
           message: "TOPICS_URL must be a local loopback HTTP endpoint",
         });
-      const summarize = (text: string) =>
+      const summarize = (text: string, source: TopicSource) =>
         attempt("Generate a video topic through Codex", async (signal) => {
           if (!endpoint) throw new Error("Set TOPICS_URL to enable topic generation");
-          const body = Schema.decodeUnknownSync(Transcript)({ text });
+          const body = Schema.decodeUnknownSync(TopicRequest)({ text, source });
           const response = await fetch(`${endpoint.replace(/\/$/, "")}/topic`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

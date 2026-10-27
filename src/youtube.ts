@@ -33,6 +33,16 @@ const Channels = Schema.Struct({
   ),
 });
 const Video = Schema.Struct({ id: Schema.String });
+const VideoStatus = Schema.Struct({
+  privacyStatus: Schema.Literals(["private", "public", "unlisted"]),
+  uploadStatus: Schema.String,
+  publishAt: Schema.optionalKey(Schema.String),
+  embeddable: Schema.optionalKey(Schema.Boolean),
+  license: Schema.optionalKey(Schema.String),
+  publicStatsViewable: Schema.optionalKey(Schema.Boolean),
+  selfDeclaredMadeForKids: Schema.optionalKey(Schema.Boolean),
+  containsSyntheticMedia: Schema.optionalKey(Schema.Boolean),
+});
 const OwnedVideo = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
@@ -46,6 +56,8 @@ const OwnedVideo = Schema.Struct({
         defaultLanguage: Schema.optionalKey(Schema.String),
         defaultAudioLanguage: Schema.optionalKey(Schema.String),
       }),
+      status: Schema.optionalKey(VideoStatus),
+      processingDetails: Schema.optionalKey(Schema.Struct({ processingStatus: Schema.String })),
     }),
   ),
 });
@@ -65,6 +77,27 @@ const Captions = Schema.Struct({
 });
 
 export class UploadReview extends Error {}
+function readyPublicationStatus(video: (typeof OwnedVideo.Type.items)[number]) {
+  const status = video.status;
+  if (!status) throw new Error("YouTube did not return publication status");
+  if (
+    ["failed", "rejected", "deleted"].includes(status.uploadStatus) ||
+    video.processingDetails?.processingStatus === "failed"
+  )
+    throw new UploadReview(
+      "YouTube could not process this video; inspect it before continuing the queue",
+    );
+  if (status.publishAt)
+    throw new UploadReview(
+      "Video was scheduled outside the application; inspect its publication before continuing",
+    );
+  if (
+    status.uploadStatus !== "processed" ||
+    video.processingDetails?.processingStatus === "processing"
+  )
+    return undefined;
+  return status;
+}
 const sourceMarker = (job: Pick<Job, "id">) => `maddyvoice:${job.id}`;
 
 function resumeOffset(range: string | null, size: number): number {
@@ -279,11 +312,11 @@ export class YouTubeClient {
     return result.videoId;
   }
 
-  private async ownedSnippet(job: Job, videoId: string, signal?: AbortSignal) {
+  private async ownedVideo(job: Job, videoId: string, part: string, signal?: AbortSignal) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId))
       throw new Error("Expected a YouTube video ID (11 characters)");
     const response = await this.request(
-      `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}`,
+      `https://www.googleapis.com/youtube/v3/videos?part=${part}&id=${videoId}`,
       {},
       signal,
     );
@@ -302,11 +335,63 @@ export class YouTubeClient {
         "Video does not belong to the configured channel or lacks this recording's source marker",
       );
     }
-    return video.snippet;
+    return video;
+  }
+
+  private async ownedSnippet(job: Job, videoId: string, signal?: AbortSignal) {
+    return (await this.ownedVideo(job, videoId, "snippet", signal)).snippet;
   }
 
   async verifyVideo(job: Job, videoId: string, signal?: AbortSignal): Promise<void> {
     await this.ownedSnippet(job, videoId, signal);
+  }
+
+  async publish(
+    job: Job,
+    privacy: "private" | "public" | "unlisted",
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (!job.youtube_id) throw new Error("Video has not been uploaded");
+    const video = await this.ownedVideo(
+      job,
+      job.youtube_id,
+      "snippet,status,processingDetails",
+      signal,
+    );
+    const status = readyPublicationStatus(video);
+    if (!status) return false;
+    if (status.privacyStatus === privacy) return true;
+    if (status.privacyStatus !== "private")
+      throw new UploadReview(
+        "Video visibility changed outside the application; inspect it before continuing",
+      );
+    const { uploadStatus: _uploadStatus, ...writableStatus } = status;
+    const response = await this.request(
+      "https://www.googleapis.com/youtube/v3/videos?part=status",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: job.youtube_id,
+          status: { ...writableStatus, privacyStatus: privacy },
+        }),
+      },
+      signal,
+    );
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(
+        `Publish YouTube video HTTP ${response.status}; check youtube.force-ssl authorization`,
+      );
+    }
+    const result = Schema.decodeUnknownSync(
+      Schema.Struct({ id: Schema.String, status: VideoStatus }),
+    )(await response.json());
+    if (result.id !== job.youtube_id || result.status.privacyStatus !== privacy)
+      throw new Error(
+        "YouTube did not confirm the requested publication; will reconcile the same video",
+      );
+    return true;
   }
 
   async captions(job: Job, signal?: AbortSignal): Promise<string | undefined> {
