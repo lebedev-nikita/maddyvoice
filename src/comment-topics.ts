@@ -238,7 +238,7 @@ export class CommentTopics extends Context.Service<
         function* (
           prompt: string,
           schema: Schema.Constraint,
-          options: { model?: string; reasoningEffort?: "low" | "medium" } = {},
+          options: { model?: string; reasoningEffort?: "low" | "medium"; timeoutMs?: number } = {},
         ) {
           const cwd = yield* Effect.acquireRelease(
             attempt("Create isolated model workspace", () =>
@@ -267,12 +267,16 @@ export class CommentTopics extends Context.Service<
               webSearch: "disabled",
             }),
             "Isolated model",
-          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+          ).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.timeout(options.timeoutMs ?? 3 * 60_000),
+          );
         },
         Effect.scoped,
-        Effect.timeout("3 minutes"),
-        Effect.mapError(
-          () => new AppError({ message: "Isolated model call failed; no automatic retry" }),
+        Effect.mapError((error) =>
+          error instanceof AppError
+            ? error
+            : new AppError({ message: "Isolated model call timed out" }),
         ),
       );
       const extract = Effect.fn("CommentTopics.extract")(function* (
@@ -283,7 +287,10 @@ export class CommentTopics extends Context.Service<
         let rejectedCandidates = 0;
         for (let offset = 0; offset < comments.length; offset += 100) {
           const batch = comments.slice(offset, offset + 100);
-          const value = yield* run(extractionPrompt(batch), Extraction, { model: extractModel });
+          const value = yield* run(extractionPrompt(batch), Extraction, {
+            model: extractModel,
+            timeoutMs: 6 * 60_000,
+          });
           const result = yield* attempt("Validate extracted nickname evidence", async () =>
             validateCandidates(value, batch),
           );

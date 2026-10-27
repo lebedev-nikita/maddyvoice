@@ -3,8 +3,8 @@ import { Config, Context, DateTime, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
 
 export const titleGenerationVersion = 1;
-// Five extraction batches and up to three generation/review pairs have separate 3-minute limits.
-export const topicGenerationTimeoutMs = 40 * 60_000;
+// Five 6-minute extraction batches, three 3-minute generation/review pairs and Telegram reads.
+export const topicGenerationTimeoutMs = 60 * 60_000;
 
 export function topicTitle(topic: string) {
   const prefix = "Мэддисон ";
