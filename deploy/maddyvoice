@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+set -a
+. /etc/maddyvoice.env
+set +a
+cd /opt/maddyvoice
+exec /opt/maddyvoice/bin/bun /opt/maddyvoice/src/+cli.ts "$@"

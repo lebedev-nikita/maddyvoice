@@ -1,0 +1,36 @@
+[Unit]
+Description=Maddyvoice Telegram-to-YouTube worker
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=maddyvoice
+Group=maddyvoice
+WorkingDirectory=/opt/maddyvoice
+EnvironmentFile=/etc/maddyvoice.env
+Environment=HOME=/var/lib/maddyvoice
+ExecStart=/opt/maddyvoice/bin/bun /opt/maddyvoice/src/+cli.ts run
+Restart=always
+RestartSec=15
+KillSignal=SIGINT
+SuccessExitStatus=130
+TimeoutStopSec=90
+StateDirectory=maddyvoice
+StateDirectoryMode=0700
+UMask=0077
+Nice=10
+CPUWeight=20
+CPUQuota=200%
+MemoryHigh=1G
+MemoryMax=1536M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/maddyvoice
+
+[Install]
+WantedBy=multi-user.target

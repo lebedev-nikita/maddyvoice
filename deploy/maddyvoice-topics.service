@@ -1,0 +1,34 @@
+[Unit]
+Description=Maddyvoice topic generator through Codex GPT Luna
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=maddyvoice
+WorkingDirectory=/var/lib/maddyvoice-topics
+Environment=HOME=/var/lib/maddyvoice-topics
+Environment=CODEX_HOME=/home/pi/.codex
+Environment=CODEX_PATH=/opt/maddyvoice/bin/codex
+Environment=TOPIC_MODEL=gpt-6-luna
+Environment=TOPICS_DATA_DIR=/var/lib/maddyvoice-topics
+ExecStart=/opt/maddyvoice/bin/bun /opt/maddyvoice/src/+topics-server.ts
+Restart=always
+RestartSec=15
+KillSignal=SIGINT
+TimeoutStopSec=30
+StateDirectory=maddyvoice-topics
+StateDirectoryMode=0700
+UMask=0077
+Nice=10
+CPUQuota=100%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/pi/.codex
+ReadWritePaths=/var/lib/maddyvoice-topics /home/pi/.codex
+
+[Install]
+WantedBy=multi-user.target
