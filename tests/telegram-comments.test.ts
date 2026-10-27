@@ -72,17 +72,33 @@ it("defines the exact one-hour boundary independently of upload time", () => {
 });
 
 function spawnerLayer(
-  reply: (command: ChildProcess.StandardCommand) => { value: unknown; code?: number },
+  reply: (
+    command: ChildProcess.StandardCommand,
+    prompt: string,
+  ) => {
+    value: unknown;
+    code?: number;
+    delay?: number;
+    onExit?: () => void;
+  },
 ) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (command._tag !== "StandardCommand") throw new Error("Unexpected pipeline");
-        const { value, code = 0 } = reply(command);
+        const input = command.options.stdin;
+        const prompt = Stream.isStream(input)
+          ? yield* input.pipe(Stream.decodeText(), Stream.mkString, Effect.orDie)
+          : "";
+        const { value, code = 0, delay = 0, onExit } = reply(command, prompt);
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+          exitCode: Effect.gen(function* () {
+            if (delay) yield* Effect.sleep(delay);
+            onExit?.();
+            return ChildProcessSpawner.ExitCode(code);
+          }),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           stdin: Sink.drain,
@@ -213,17 +229,29 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
     text: `Ворон в комментарии ${index + 1}`,
   }));
   const commands: ChildProcess.StandardCommand[] = [];
+  let active = 0;
+  let maxActive = 0;
   const layer = CommentTopics.layer.pipe(
     Layer.provide(
-      spawnerLayer((command) => {
-        const comment = comments[commands.length * 100]!;
+      spawnerLayer((command, prompt) => {
+        const batch = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1)) as typeof comments;
+        const comment = batch[0]!;
         commands.push(command);
+        active++;
+        maxActive = Math.max(maxActive, active);
         expect(command.args).toContain("--ignore-rules");
         expect(command.args).toContain('web_search="disabled"');
         return {
+          delay: 20,
+          onExit: () => {
+            active--;
+          },
           value: {
             candidates: [
-              { nick: "Ворон", mentions: [{ commentId: comment.id, quote: comment.text }] },
+              {
+                nick: "Ворон",
+                mentions: [{ commentId: comment.id, quote: comment.text }],
+              },
             ],
           },
         };
@@ -240,16 +268,70 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
       }),
     ).pipe(Effect.provide(layer)),
   );
-  expect(commands).toHaveLength(5);
-  expect(new Set(commands.map((command) => command.options.cwd)).size).toBe(5);
+  expect(commands).toHaveLength(10);
+  expect(maxActive).toBe(2);
+  expect(active).toBe(0);
+  expect(new Set(commands.map((command) => command.options.cwd)).size).toBe(10);
   expect(result.candidates).toHaveLength(1);
   expect(result.candidates[0]?.mentions.map((mention) => mention.commentId)).toEqual([
     "1",
+    "51",
     "101",
+    "151",
     "201",
+    "251",
     "301",
+    "351",
     "401",
+    "451",
   ]);
+});
+
+it("filters bodies in parallel Luna batches while preserving selected text and excluding author metadata", async () => {
+  const comments = Array.from({ length: 250 }, (_, index) => ({
+    id: String(index + 1),
+    text: index % 2 ? "Ха-ха" : `Ворон в игре ${index}`,
+    sender_name: "hidden-author",
+  }));
+  let active = 0;
+  let maxActive = 0;
+  let calls = 0;
+  const layer = CommentTopics.layer.pipe(
+    Layer.provide(
+      spawnerLayer((command, prompt) => {
+        expect(command.args).toContain("gpt-6-luna");
+        expect(prompt).not.toContain("hidden-author");
+        const input = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1));
+        expect(input.comments.length).toBeLessThanOrEqual(100);
+        calls++;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        return {
+          value: {
+            keepIds: input.comments
+              .filter((comment: { text: string }) => comment.text.includes("Ворон"))
+              .map((comment: { id: string }) => comment.id),
+          },
+          delay: 20,
+          onExit: () => {
+            active--;
+          },
+        };
+      }),
+    ),
+    Layer.provide(config),
+  );
+  const result = await Effect.runPromise(
+    CommentTopics.use((service) => service.filter("Речь о новой игре", comments)).pipe(
+      Effect.provide(layer),
+    ),
+  );
+  expect(result).toEqual(
+    comments.filter((_, index) => index % 2 === 0).map(({ id, text }) => ({ id, text })),
+  );
+  expect(calls).toBe(3);
+  expect(maxActive).toBe(2);
+  expect(active).toBe(0);
 });
 
 it("uses comment candidates in the production Codex service and removes the duplicated author prefix", async () => {
@@ -280,6 +362,8 @@ it("uses comment candidates in the production Codex service and removes the dupl
           CommentTopics.of({
             model: "test",
             reviewModel: "test",
+            filterModel: "test",
+            filter: (_, input) => Effect.succeed(input),
             extract: (input) => {
               expect(input).toEqual(comments);
               return Effect.succeed({
@@ -384,6 +468,7 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
     subjects: [{ name: "Ворон", transcriptQuote: transcript, commentIds: ["a", "b"] }],
   });
   const responses = [
+    { keepIds: ["a", "b"] },
     { candidates: [candidate] },
     draft("Ворон возвращается в стриминг"),
     {
@@ -425,6 +510,6 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
       ),
     ),
   ).toBe("Ворон пытается доказать свою правоту");
-  expect(calls).toBe(5);
+  expect(calls).toBe(6);
   expect(reads).toBe(1);
 });

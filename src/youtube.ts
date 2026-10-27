@@ -339,8 +339,9 @@ export class YouTubeClient {
       signal,
     );
     if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error(`YouTube video check HTTP ${response.status}`);
+      throw new Error(
+        `YouTube video check HTTP ${response.status} (${await youtubeErrorReason(response)})`,
+      );
     }
     const video = Schema.decodeUnknownSync(OwnedVideo)(await response.json()).items[0];
     if (
@@ -397,10 +398,8 @@ export class YouTubeClient {
       signal,
     );
     if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error(
-        `Publish YouTube video HTTP ${response.status}; check youtube.force-ssl authorization`,
-      );
+      const reason = await youtubeErrorReason(response);
+      throw new Error(`Publish YouTube video HTTP ${response.status} (${reason})`);
     }
     const result = Schema.decodeUnknownSync(
       Schema.Struct({ id: Schema.String, status: VideoStatus }),

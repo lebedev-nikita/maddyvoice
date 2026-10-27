@@ -12,6 +12,7 @@ Environment=HOME=/var/lib/maddyvoice-topics
 Environment=CODEX_HOME=/home/pi/.codex
 Environment=CODEX_PATH=/opt/maddyvoice/bin/codex
 Environment=TOPIC_MODEL=gpt-6.1-sol
+Environment=TOPIC_FILTER_MODEL=gpt-6-luna
 Environment=TOPIC_EXTRACT_MODEL=gpt-6.1-sol
 Environment=TOPIC_REVIEW_MODEL=gpt-6.1-sol
 Environment=TG_PROFILE=personal

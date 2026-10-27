@@ -113,7 +113,11 @@ export class CodexTopics extends Context.Service<
             return yield* new AppError({
               message: "Waiting one hour after Telegram publication for comments",
             });
-          const comments = yield* commentsReader.read(source);
+          const bodies = yield* commentsReader.read(source);
+          const comments = yield* commentTopics.filter(text, bodies);
+          yield* Effect.logInfo(
+            `Comment selection #${source.messageId}: ${bodies.length} text bodies, ${comments.length} retained`,
+          );
           const extraction = yield* commentTopics.extract(comments);
           const candidates = extraction.candidates.filter(
             (candidate) => candidate.mentions.length >= 2,

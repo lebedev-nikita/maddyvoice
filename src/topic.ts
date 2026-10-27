@@ -93,6 +93,7 @@ export class Topics extends Context.Service<
           const body = Schema.decodeUnknownSync(TopicRequest)({ text, source });
           const response = await fetch(`${endpoint.replace(/\/$/, "")}/topic`, {
             method: "POST",
+            timeout: false,
             headers: { "Content-Type": "application/json" },
             signal: AbortSignal.any([
               signal,

@@ -8,6 +8,8 @@ import {
   titlePrompt,
   validateCandidates,
   validateGeneratedTopic,
+  selectedComments,
+  filterPrompt,
 } from "../src/comment-topics.ts";
 
 const comments = [
@@ -18,6 +20,18 @@ const candidate = {
   nick: "Ворон",
   mentions: comments.map((comment) => ({ commentId: comment.id, quote: comment.text })),
 };
+
+it("keeps original comment bodies and order after filtering, rejecting invented or duplicate IDs", () => {
+  expect(selectedComments({ keepIds: ["c2", "c1"] }, comments)).toEqual(comments);
+  expect(selectedComments({ keepIds: [] }, comments)).toEqual([]);
+  expect(() => selectedComments({ keepIds: ["unknown"] }, comments)).toThrow("unknown IDs");
+  expect(() => selectedComments({ keepIds: ["c1", "c1"] }, comments)).toThrow("duplicate");
+  expect(
+    filterPrompt("Речь о новой игре", [
+      { id: "1", text: "Ворон", sender_name: "private-author" } as (typeof comments)[number],
+    ]),
+  ).not.toContain("private-author");
+});
 
 it("removes author names and other metadata before extraction, and ignores empty bodies", () => {
   const raw = [
