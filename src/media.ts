@@ -9,10 +9,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { AppError, attempt, Paths, Settings } from "./core.ts";
 import type { Post } from "./telegram.ts";
 
-export const portraitAttribution =
-  "Default background photo: Ilya Maddyson. Source: " +
-  "https://click-or-die.ru/app/uploads/2025/06/photo_2024-07-31_13-33-46.jpg";
-
 function allowedMedia(url: string): boolean {
   const parsed = new URL(url);
   return (
