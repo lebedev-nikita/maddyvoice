@@ -1,0 +1,30 @@
+[Unit]
+Description=Apply Maddyvoice thumbnail batch %i
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=maddyvoice
+Group=maddyvoice
+WorkingDirectory=/opt/maddyvoice
+EnvironmentFile=/etc/maddyvoice.env
+Environment=HOME=/var/lib/maddyvoice
+ExecStart=/opt/maddyvoice/bin/bun /opt/maddyvoice/scripts/+apply-thumbnails.ts --manifest /var/lib/maddyvoice/thumbnail-%i/manifest.json
+Restart=on-failure
+RestartSec=30min
+RestartPreventExitStatus=78
+TimeoutStartSec=1h
+UMask=0077
+Nice=10
+CPUQuota=100%
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/maddyvoice/thumbnail-%i
+
+[Install]
+WantedBy=multi-user.target

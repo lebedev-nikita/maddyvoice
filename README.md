@@ -298,7 +298,14 @@ saving each approved result and input/prompt hashes. It sends no expected answer
 to the model. The second renders 1280×720 PNGs with FFmpeg and the bundled Oswald
 font, without a browser. FFmpeg needs `drawtext` and `geq`; select a suitable build
 with `FFMPEG_PATH`. Rendering is sequential and limits FFmpeg to two threads.
-These commands create local files; uploading thumbnails is a separate operation.
+These commands create local files. To update an explicit batch of existing videos,
+run `bun run thumbnail:apply --manifest data/thumbnail-batch/manifest.json`.
+The manifest contains `channelId` and `rows` with `jobId`, `video` and `sha256`;
+PNGs live at `images/<video>.png` beside it. The uploader verifies the destination
+channel, recording markers and fingerprints, then checkpoints each confirmed
+update in `progress.json`. Resume with the same immutable manifest after failures.
+Exit status 75 means a transient error (including quota exhaustion); 78 requires
+operator review. Only the thumbnails endpoint is used for these updates.
 Generated quotes, PNGs and archives belong under the ignored `data/` directory.
 
 ## Storage and recovery
