@@ -54,8 +54,10 @@ const server = Bun.serve({
   port: 11435,
   maxRequestBodySize: 256 * 1024,
   idleTimeout: 255,
-  fetch(request) {
+  fetch(request, server) {
     const route = routes[`${request.method} ${new URL(request.url).pathname}`];
+    if (request.method === "POST" && new URL(request.url).pathname === "/topic")
+      server.timeout(request, 0);
     return route ? route(request) : new Response("Not found", { status: 404 });
   },
 });

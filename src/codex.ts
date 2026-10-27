@@ -3,7 +3,13 @@ import { ChildProcessSpawner } from "effect/process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { AppError, attempt, Paths } from "./core.ts";
-import { commentsReadyAt, TopicRequest, Transcript, type TopicSource } from "./topic.ts";
+import {
+  commentsReadyAt,
+  topicGenerationTimeoutMs,
+  TopicRequest,
+  Transcript,
+  type TopicSource,
+} from "./topic.ts";
 import { CommentTopics, finalizeCommentTopic } from "./comment-topics.ts";
 import { TelegramComments } from "./telegram-comments.ts";
 import { codexCommand, codexSettings, commandJson } from "./commands.ts";
@@ -123,7 +129,7 @@ export class CodexTopics extends Context.Service<
             commentTopics.verify(speech, topic),
           );
         },
-        Effect.timeout("3 minutes"),
+        Effect.timeout(topicGenerationTimeoutMs),
         Effect.mapError((error) =>
           error instanceof AppError
             ? error
