@@ -60,7 +60,7 @@ below. Existing YouTube publication dates cannot be reordered by a code update.
    ```sh
    maddyvoice_revision=FULL_REVIEWED_COMMIT_SHA
    maddyvoice_bundle="$(mktemp -t maddyvoice-release)"
-   git archive --format=tar.gz --output="$maddyvoice_bundle" "$maddyvoice_revision" src assets db deploy package.json bun.lock
+   git archive --format=tar.gz --output="$maddyvoice_bundle" "$maddyvoice_revision" src assets db deploy scripts package.json bun.lock
    scp "$maddyvoice_bundle" pibox:/tmp/maddyvoice-release.tar.gz
    ```
 

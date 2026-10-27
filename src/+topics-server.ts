@@ -6,10 +6,13 @@ import { CommentTopics } from "./comment-topics.ts";
 import { TelegramComments } from "./telegram-comments.ts";
 import { AppError } from "./core.ts";
 import { commentsReadyAt, TopicRequest } from "./topic.ts";
+import { ThumbnailQuotes } from "./thumbnail-quote.ts";
 
 const runtime = ManagedRuntime.make(
   CodexTopics.layer.pipe(
-    Layer.provide(Layer.mergeAll(CommentTopics.layer, TelegramComments.layer)),
+    Layer.provide(
+      Layer.mergeAll(CommentTopics.layer, TelegramComments.layer, ThumbnailQuotes.layer),
+    ),
     Layer.provide(BunServices.layer),
   ),
 );
@@ -18,10 +21,10 @@ async function generateTopic(body: typeof TopicRequest.Type) {
   if (busy) return new Response("A topic is already being generated", { status: 503 });
   busy = true;
   try {
-    const topic = await runtime.runPromise(
+    const result = await runtime.runPromise(
       CodexTopics.use((service) => service.summarize(body.text, body.source)),
     );
-    return Response.json({ topic });
+    return Response.json(result);
   } catch (cause) {
     console.error(
       "Topic failed:",

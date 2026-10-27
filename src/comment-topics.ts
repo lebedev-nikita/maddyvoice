@@ -1,11 +1,7 @@
 import { Config, Context, Effect, Layer, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { AppError, attempt, safeMessage } from "./core.ts";
 import { topicTitle, validateTopic } from "./topic.ts";
-import { codexCommand, codexSettings, commandJson } from "./commands.ts";
+import { codexSettings, isolatedModel } from "./commands.ts";
 import { reviewPrompt, TopicReview, validateReview } from "./topic-review.ts";
 import { titleStyle } from "./title-style.ts";
 import { sameTitleName, titleNameForms } from "./person-name.ts";
@@ -287,8 +283,8 @@ export class CommentTopics extends Context.Service<
   static readonly layer = Layer.effect(
     CommentTopics,
     Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const { binary, model } = yield* codexSettings;
+      const { model } = yield* codexSettings;
+      const run = yield* isolatedModel;
       const extractModel = yield* Config.String("TOPIC_EXTRACT_MODEL").pipe(
         Config.withDefault("gpt-6.1-sol"),
       );
@@ -297,51 +293,6 @@ export class CommentTopics extends Context.Service<
       );
       const reviewModel = yield* Config.String("TOPIC_REVIEW_MODEL").pipe(
         Config.withDefault("gpt-6.1-sol"),
-      );
-      const run = Effect.fn("CommentTopics.run")(
-        function* (
-          prompt: string,
-          schema: Schema.Constraint,
-          options: { model?: string; reasoningEffort?: "low" | "medium"; timeoutMs?: number } = {},
-        ) {
-          const cwd = yield* Effect.acquireRelease(
-            attempt("Create isolated model workspace", () =>
-              mkdtemp(join(tmpdir(), "comment-topic-")),
-            ),
-            (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
-          );
-          const schemaPath = join(cwd, "output.schema.json");
-          yield* attempt("Write output schema", () =>
-            writeFile(
-              schemaPath,
-              JSON.stringify(
-                Schema.toJsonSchemaDocument(schema, { onExcessProperty: "error" }).schema,
-              ),
-              { mode: 0o600 },
-            ),
-          );
-          return yield* commandJson(
-            codexCommand({
-              binary,
-              model: options.model ?? model,
-              reasoningEffort: options.reasoningEffort,
-              schemaPath,
-              cwd,
-              prompt,
-              webSearch: "disabled",
-            }),
-            "Isolated model",
-          ).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.timeout(options.timeoutMs ?? 3 * 60_000),
-          );
-        },
-        Effect.scoped,
-        Effect.mapError((error) =>
-          error instanceof AppError
-            ? error
-            : new AppError({ message: "Isolated model call timed out" }),
-        ),
       );
       const filter = Effect.fn("CommentTopics.filter")(function* (
         transcript: string,

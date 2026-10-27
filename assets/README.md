@@ -6,3 +6,7 @@ AI-restored and upscaled from 1280 × 853 to 1620 × 1080 pixels.
 Used as the video background when a Telegram voice post has no attached photos.
 The 1920 × 1080 video frame preserves the photo's proportions with dark side bars.
 No Creative Commons license is asserted for it.
+
+Thumbnail lettering uses [Oswald](https://github.com/google/fonts/tree/main/ofl/oswald),
+Copyright 2016 The Oswald Project Authors, under the SIL Open Font License 1.1.
+The font and its license are bundled in `assets/fonts/`.

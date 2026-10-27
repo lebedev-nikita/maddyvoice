@@ -1,6 +1,7 @@
 import { load } from "cheerio";
 import { Config, Context, DateTime, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
+import { ThumbnailQuote, validateThumbnailQuote } from "./thumbnail-quote.ts";
 
 export const titleGenerationVersion = 1;
 // Five 6-minute extraction batches, three 3-minute generation/review pairs and Telegram reads.
@@ -45,6 +46,8 @@ export function captionText(srt: string) {
 const Topic = Schema.Struct({
   topic: Schema.String.check(Schema.isMinLength(8), Schema.isMaxLength(75)),
 });
+const GeneratedTopic = Schema.Struct({ ...Topic.fields, ...ThumbnailQuote.fields });
+export type GeneratedTopic = typeof GeneratedTopic.Type;
 export const Transcript = Schema.Struct({
   text: Schema.String.check(Schema.isMinLength(10), Schema.isMaxLength(200_000)),
 });
@@ -76,7 +79,7 @@ export class Topics extends Context.Service<
   Topics,
   {
     readonly enabled: boolean;
-    summarize(text: string, source: TopicSource): Effect.Effect<string, AppError>;
+    summarize(text: string, source: TopicSource): Effect.Effect<GeneratedTopic, AppError>;
   }
 >()("maddyvoice/Topics") {
   static readonly layer = Layer.effect(
@@ -105,7 +108,11 @@ export class Topics extends Context.Service<
             await response.body?.cancel();
             throw new Error(`Codex topic service HTTP ${response.status}`);
           }
-          return validateTopic(await response.json());
+          const result = Schema.decodeUnknownSync(GeneratedTopic)(await response.json());
+          return {
+            topic: validateTopic(result),
+            thumbnailQuote: validateThumbnailQuote(result, text),
+          };
         });
       return Topics.of({ enabled: endpoint.length > 0, summarize });
     }),

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppError, Settings } from "../src/core.ts";
 import { getCursor, listJobs, runSql, savePosts, Store, type Job } from "../src/database.ts";
-import { commentsReadyAt, Topics } from "../src/topic.ts";
+import { commentsReadyAt, Topics, type TopicSource } from "../src/topic.ts";
 import { drainTitles, listTitles, regenerateTitles } from "../src/titles.ts";
 import { YouTube, YouTubeClient } from "../src/youtube.ts";
 
@@ -21,7 +21,10 @@ const auth = {
   channelTitle: "Test",
 };
 
-async function fixture(client: YouTubeClient, summarize: Topics["Service"]["summarize"]) {
+async function fixture(
+  client: YouTubeClient,
+  summarize: (text: string, source: TopicSource) => Effect.Effect<string, AppError>,
+) {
   const dataDir = await mkdtemp(join(tmpdir(), "maddyvoice-titles-test-"));
   temporary.push(dataDir);
   const config = Layer.succeed(
@@ -38,7 +41,16 @@ async function fixture(client: YouTubeClient, summarize: Topics["Service"]["summ
   );
   return Layer.mergeAll(
     Store.layer.pipe(Layer.provideMerge(config)),
-    Layer.succeed(Topics, Topics.of({ enabled: true, summarize })),
+    Layer.succeed(
+      Topics,
+      Topics.of({
+        enabled: true,
+        summarize: (text, source) =>
+          summarize(text, source).pipe(
+            Effect.map((topic) => ({ topic, thumbnailQuote: "Большой рассказ" })),
+          ),
+      }),
+    ),
     Layer.succeed(YouTube, YouTube.of({ load: () => Effect.succeed(client) })),
   );
 }
@@ -137,6 +149,7 @@ it("keeps a generated comment-assisted topic across a lost YouTube update respon
       expect((yield* listTitles())[0]).toMatchObject({
         status: "pending",
         topic: "Впечатления от новой компьютерной игры",
+        thumbnail_quote: "Большой рассказ",
         transcript: null,
       });
       yield* drainTitles(1, true);

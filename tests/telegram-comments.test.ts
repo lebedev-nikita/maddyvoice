@@ -1,3 +1,4 @@
+import { ThumbnailQuotes } from "../src/thumbnail-quote.ts";
 import { expect, it } from "vite-plus/test";
 import { ConfigProvider, DateTime, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -387,6 +388,12 @@ it("uses comment candidates in the production Codex service and removes the dupl
         }),
       ),
     ),
+    Layer.provide(
+      Layer.succeed(
+        ThumbnailQuotes,
+        ThumbnailQuotes.of({ generate: () => Effect.succeed("Вор опять спорит") }),
+      ),
+    ),
     Layer.provide(config),
   );
   expect(
@@ -395,7 +402,7 @@ it("uses comment candidates in the production Codex service and removes the dupl
         Effect.provide(layer),
       ),
     ),
-  ).toBe("обсуждает спор с Ворон");
+  ).toEqual({ topic: "обсуждает спор с Ворон", thumbnailQuote: "Вор опять спорит" });
   expect(reads).toBe(1);
 });
 
@@ -482,6 +489,12 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
       ),
     ),
     Layer.provide(spawnerLayer(() => ({ value: responses[calls++] }))),
+    Layer.provide(
+      Layer.succeed(
+        ThumbnailQuotes,
+        ThumbnailQuotes.of({ generate: () => Effect.succeed("пытается доказать свою правоту") }),
+      ),
+    ),
     Layer.provide(config),
   );
   expect(
@@ -490,7 +503,10 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
         Effect.provide(layer),
       ),
     ),
-  ).toBe("Ворон пытается доказать свою правоту");
+  ).toEqual({
+    topic: "Ворон пытается доказать свою правоту",
+    thumbnailQuote: "пытается доказать свою правоту",
+  });
   expect(calls).toBe(6);
   expect(reads).toBe(1);
 });
