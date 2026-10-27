@@ -13,7 +13,8 @@
     "check:comment-title": "bun scripts/+comment-title-check.ts",
     "topics": "bun src/+topics-server.ts",
     "thumbnail:quotes": "bun scripts/+thumbnail-quotes.ts",
-    "thumbnail:render": "bun scripts/+render-thumbnails.ts"
+    "thumbnail:render": "bun scripts/+render-thumbnails.ts",
+    "thumbnail:apply": "bun scripts/+apply-thumbnails.ts"
   },
   "dependencies": {
     "@boxdb/client": "^0.5.1",

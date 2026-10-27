@@ -250,3 +250,22 @@ The exception is persisted only on unfinished recordings found in that complete
 scan. Processing, backoff and review still block later recordings. If interrupted,
 resume the same queue with `upload` or the service; do not clear upload sessions.
 Normal history imports and new recordings retain the publication boundary.
+
+## Resume a thumbnail update batch
+
+An approved immutable batch lives under `/var/lib/maddyvoice/thumbnail-<name>/`
+with `manifest.json` and its `images/` directory, owned by `maddyvoice` and private
+to that account. See the thumbnail commands in the root README for its format.
+Install the batch service and enable that specific instance:
+
+```sh
+sudo install -m 0644 deploy/maddyvoice-thumbnails@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now maddyvoice-thumbnails@<name>.service
+```
+
+It retries transient failures every 30 minutes, preserves confirmed updates in
+`progress.json` and stops after all images are applied. Exit 78 stops automatic
+retries for a batch requiring review. This service has a separate batch lock and
+can run alongside the publisher: it changes only thumbnails of the exact video
+IDs in the manifest, after verifying channel ownership and recording markers.

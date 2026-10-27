@@ -448,3 +448,66 @@ describe("resumable upload", () => {
     await expect(client.verifyVideo(job, "abcdefghijk")).rejects.toThrow("source marker");
   });
 });
+
+describe("custom thumbnails", () => {
+  const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+  const uploaded = { ...job, youtube_id: "abcdefghijk" };
+  it("uploads only PNG bytes after checking the channel and recording marker", async () => {
+    const mutations: string[] = [];
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (!url.includes("/thumbnails/set"))
+        return Response.json({
+          items: [
+            {
+              id: "abcdefghijk",
+              snippet: { channelId: auth.channelId, description: `maddyvoice:${job.id}` },
+            },
+          ],
+        });
+      mutations.push(url);
+      expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("Content-Type")).toBe("image/png");
+      expect(new Uint8Array(await new Response(init?.body).arrayBuffer())).toEqual(png);
+      return Response.json({
+        items: [{ high: { url: "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg" } }],
+      });
+    });
+    await client.setThumbnail(uploaded, png);
+    expect(mutations).toEqual([
+      "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?uploadType=media&videoId=abcdefghijk",
+    ]);
+  });
+  it("refuses a mismatched recording before uploading and rejects invalid image bytes", async () => {
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      expect(init?.method).not.toBe("POST");
+      return Response.json({
+        items: [
+          {
+            id: "abcdefghijk",
+            snippet: { channelId: auth.channelId, description: "maddyvoice:another-job" },
+          },
+        ],
+      });
+    });
+    await expect(client.setThumbnail(uploaded, png)).rejects.toThrow("source marker");
+    await expect(client.setThumbnail(uploaded, new Uint8Array(8))).rejects.toThrow("PNG");
+  });
+  it("reports quota failure so a batch can retry instead of marking the image applied", async () => {
+    const client = new YouTubeClient(auth, async (url) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (url.includes("/thumbnails/set"))
+        return Response.json({ error: { errors: [{ reason: "quotaExceeded" }] } }, { status: 403 });
+      return Response.json({
+        items: [
+          {
+            id: "abcdefghijk",
+            snippet: { channelId: auth.channelId, description: `maddyvoice:${job.id}` },
+          },
+        ],
+      });
+    });
+    await expect(client.setThumbnail(uploaded, png)).rejects.toThrow("quotaExceeded");
+  });
+});

@@ -206,18 +206,23 @@ export class YouTubeClient {
     return call();
   }
 
-  async verifyChannel(signal?: AbortSignal): Promise<void> {
+  async verifyChannel(signal?: AbortSignal, expectedChannel = this.auth.channelId): Promise<void> {
     const response = await this.request(
       "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
       {},
       signal,
     );
     if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error(`YouTube channel verification HTTP ${response.status}`);
+      throw new Error(
+        `YouTube channel verification HTTP ${response.status} (${await youtubeErrorReason(response)})`,
+      );
     }
     const channels = Schema.decodeUnknownSync(Channels)(await response.json());
-    if (channels.items.length !== 1 || channels.items[0]?.id !== this.auth.channelId) {
+    if (
+      channels.items.length !== 1 ||
+      channels.items[0]?.id !== this.auth.channelId ||
+      this.auth.channelId !== expectedChannel
+    ) {
       throw new Error(
         "OAuth is connected to a different YouTube channel; run auth youtube and choose the intended channel",
       );
@@ -329,7 +334,12 @@ export class YouTubeClient {
     return result.videoId;
   }
 
-  private async ownedVideo(job: Job, videoId: string, part: string, signal?: AbortSignal) {
+  private async ownedVideo(
+    job: Pick<Job, "id">,
+    videoId: string,
+    part: string,
+    signal?: AbortSignal,
+  ) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId))
       throw new Error("Expected a YouTube video ID (11 characters)");
     const response = await this.request(
@@ -356,7 +366,7 @@ export class YouTubeClient {
     return video;
   }
 
-  private async ownedSnippet(job: Job, videoId: string, signal?: AbortSignal) {
+  private async ownedSnippet(job: Pick<Job, "id">, videoId: string, signal?: AbortSignal) {
     return (await this.ownedVideo(job, videoId, "snippet", signal)).snippet;
   }
 
@@ -483,6 +493,43 @@ export class YouTubeClient {
     if (Schema.decodeUnknownSync(Video)(await updated.json()).id !== job.youtube_id)
       throw new Error("YouTube returned a different video after title update");
     return "applied";
+  }
+
+  async setThumbnail(job: Pick<Job, "id" | "youtube_id">, png: Uint8Array, signal?: AbortSignal) {
+    if (!job.youtube_id) throw new Error("Video has not been uploaded");
+    if (
+      png.byteLength > 50 * 1024 * 1024 ||
+      !Buffer.from(png.subarray(0, 8)).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    )
+      throw new Error("Thumbnail must be a PNG smaller than 50 MiB");
+    await this.ownedSnippet(job, job.youtube_id, signal);
+    const response = await this.request(
+      `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?uploadType=media&videoId=${job.youtube_id}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "image/png" },
+        body: new Blob([Uint8Array.from(png)]),
+      },
+      signal,
+    );
+    if (!response.ok)
+      throw new Error(
+        `Set YouTube thumbnail HTTP ${response.status} (${await youtubeErrorReason(response)})`,
+      );
+    const result = Schema.decodeUnknownSync(
+      Schema.Struct({
+        items: Schema.Array(
+          Schema.Record(Schema.String, Schema.Struct({ url: Schema.String })),
+        ).check(Schema.isMinLength(1)),
+      }),
+    )(await response.json());
+    if (
+      !result.items.some((item) =>
+        Object.values(item).some((image) => image.url.startsWith("https://")),
+      )
+    )
+      throw new Error("YouTube did not confirm a thumbnail URL");
+    return result.items;
   }
 }
 
