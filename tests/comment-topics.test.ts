@@ -10,6 +10,7 @@ import {
   validateGeneratedTopic,
   selectedComments,
   filterPrompt,
+  validateExtractedNames,
 } from "../src/comment-topics.ts";
 
 const comments = [
@@ -20,6 +21,17 @@ const candidate = {
   nick: "Ворон",
   mentions: comments.map((comment) => ({ commentId: comment.id, quote: comment.text })),
 };
+
+it("derives literal evidence in code and excludes invented names, substrings and copied bodies", () => {
+  const bodies = [
+    ...comments,
+    { id: "copy", text: comments[0]!.text },
+    { id: "substring", text: "Ворона каркает" },
+  ];
+  const result = validateExtractedNames({ nicks: ["Ворон", "Неведомый"] }, bodies);
+  expect(result.candidates).toEqual([candidate]);
+  expect(result.rejectedCandidates).toBe(1);
+});
 
 it("keeps original comment bodies and order after filtering, rejecting invented or duplicate IDs", () => {
   expect(selectedComments({ keepIds: ["c2", "c1"] }, comments)).toEqual(comments);
