@@ -7,11 +7,17 @@ import { TelegramComments } from "./telegram-comments.ts";
 import { AppError } from "./core.ts";
 import { commentsReadyAt, TopicRequest } from "./topic.ts";
 import { ThumbnailQuotes } from "./thumbnail-quote.ts";
+import { VideoTagGenerator } from "./video-tags.ts";
 
 const runtime = ManagedRuntime.make(
   CodexTopics.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(CommentTopics.layer, TelegramComments.layer, ThumbnailQuotes.layer),
+      Layer.mergeAll(
+        CommentTopics.layer,
+        TelegramComments.layer,
+        ThumbnailQuotes.layer,
+        VideoTagGenerator.layer,
+      ),
     ),
     Layer.provide(BunServices.layer),
   ),

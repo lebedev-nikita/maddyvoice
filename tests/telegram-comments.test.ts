@@ -1,4 +1,5 @@
 import { ThumbnailQuotes } from "../src/thumbnail-quote.ts";
+import { VideoTagGenerator } from "../src/video-tags.ts";
 import { expect, it } from "vite-plus/test";
 import { ConfigProvider, DateTime, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -333,6 +334,18 @@ it("uses comment candidates in the production Codex service and removes the dupl
   let reads = 0;
   const layer = CodexTopics.layer.pipe(
     Layer.provide(
+      Layer.succeed(
+        VideoTagGenerator,
+        VideoTagGenerator.of({
+          generate: (text, context) => {
+            expect(text).toBe(transcript);
+            expect(context?.title).toBe("Мэддисон обсуждает спор с Ворон");
+            return Effect.succeed(["спор"]);
+          },
+        }),
+      ),
+    ),
+    Layer.provide(
       Layer.mergeAll(
         Layer.succeed(
           TelegramComments,
@@ -402,7 +415,11 @@ it("uses comment candidates in the production Codex service and removes the dupl
         Effect.provide(layer),
       ),
     ),
-  ).toEqual({ topic: "обсуждает спор с Ворон", thumbnailQuote: "Вор опять спорит" });
+  ).toEqual({
+    topic: "обсуждает спор с Ворон",
+    thumbnailQuote: "Вор опять спорит",
+    tags: ["спор"],
+  });
   expect(reads).toBe(1);
 });
 
@@ -475,6 +492,17 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
   let reads = 0;
   const layer = CodexTopics.layer.pipe(
     Layer.provide(
+      Layer.succeed(
+        VideoTagGenerator,
+        VideoTagGenerator.of({
+          generate: (text) => {
+            expect(text).toBe(transcript);
+            return Effect.succeed(["новая игра"]);
+          },
+        }),
+      ),
+    ),
+    Layer.provide(
       Layer.mergeAll(
         CommentTopics.layer,
         Layer.succeed(
@@ -506,6 +534,7 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
   ).toEqual({
     topic: "Ворон пытается доказать свою правоту",
     thumbnailQuote: "пытается доказать свою правоту",
+    tags: ["новая игра"],
   });
   expect(calls).toBe(6);
   expect(reads).toBe(1);

@@ -5,6 +5,7 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt, checkedFetch, Settings } from "./core.ts";
 import type { Job } from "./database.ts";
 import { captionText, topicTitle } from "./topic.ts";
+import { defaultVideoTags, mergeVideoTags } from "./video-tags.ts";
 
 const Auth = Schema.Struct({
   clientId: Schema.String,
@@ -133,7 +134,7 @@ export function videoMetadata(job: Job, privacy: "public" | "private" | "unliste
       categoryId: "22",
       defaultLanguage: "ru",
       defaultAudioLanguage: "ru",
-      tags: ["Мэддисон", "голосовые", "maddyvoice"],
+      tags: defaultVideoTags,
     },
     status: { privacyStatus: privacy, selfDeclaredMadeForKids: false },
   };
@@ -463,13 +464,17 @@ export class YouTubeClient {
     job: Job,
     title: string,
     previousTitle?: string | null,
+    tags?: readonly string[],
     signal?: AbortSignal,
   ): Promise<"applied" | "manual"> {
     if (!job.youtube_id) throw new Error("Video has not been uploaded");
     const current = await this.ownedSnippet(job, job.youtube_id, signal);
     if (!current.title) throw new Error("YouTube video has no title");
-    if (current.title === title) return "applied";
+    const nextTags = tags === undefined ? current.tags : mergeVideoTags(current.tags ?? [], tags);
+    if (current.title === title && JSON.stringify(current.tags) === JSON.stringify(nextTags))
+      return "applied";
     const managedTitles = [
+      title,
       videoMetadata(job, "private").snippet.title,
       legacyInitialTitle(job),
       previousTitle,
@@ -477,12 +482,21 @@ export class YouTubeClient {
     if (!managedTitles.includes(current.title)) return "manual";
     if (!current.categoryId) throw new Error("YouTube video has no category");
     const { channelId: _channelId, ...snippet } = current;
+    await this.saveSnippet(job.youtube_id, { ...snippet, title, tags: nextTags }, signal);
+    return "applied";
+  }
+
+  private async saveSnippet(
+    videoId: string,
+    snippet: Omit<(typeof OwnedVideo.Type.items)[number]["snippet"], "channelId">,
+    signal?: AbortSignal,
+  ) {
     const updated = await this.request(
       "https://www.googleapis.com/youtube/v3/videos?part=snippet",
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: job.youtube_id, snippet: { ...snippet, title } }),
+        body: JSON.stringify({ id: videoId, snippet }),
       },
       signal,
     );
@@ -490,9 +504,8 @@ export class YouTubeClient {
       const reason = await youtubeErrorReason(updated);
       throw new Error(`Update YouTube title HTTP ${updated.status} (${reason})`);
     }
-    if (Schema.decodeUnknownSync(Video)(await updated.json()).id !== job.youtube_id)
+    if (Schema.decodeUnknownSync(Video)(await updated.json()).id !== videoId)
       throw new Error("YouTube returned a different video after title update");
-    return "applied";
   }
 
   async setThumbnail(job: Pick<Job, "id" | "youtube_id">, png: Uint8Array, signal?: AbortSignal) {

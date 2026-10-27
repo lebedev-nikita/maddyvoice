@@ -10,8 +10,10 @@ import {
   Transcript,
   type TopicSource,
   type GeneratedTopic,
+  topicTitle,
 } from "./topic.ts";
 import { ThumbnailQuotes } from "./thumbnail-quote.ts";
+import { VideoTagGenerator } from "./video-tags.ts";
 import { CommentTopics, finalizeCommentTopic } from "./comment-topics.ts";
 import { TelegramComments } from "./telegram-comments.ts";
 import { codexCommand, codexSettings, commandJson } from "./commands.ts";
@@ -38,6 +40,7 @@ export class CodexTopics extends Context.Service<
       const commentsReader = yield* TelegramComments;
       const commentTopics = yield* CommentTopics;
       const thumbnailQuotes = yield* ThumbnailQuotes;
+      const videoTags = yield* VideoTagGenerator;
       const { binary, model } = yield* codexSettings;
       const peopleFile = yield* Config.String("PEOPLE_FILE").pipe(Config.withDefault(Paths.people));
       const directory = yield* Config.String("TOPICS_DATA_DIR").pipe(
@@ -136,7 +139,15 @@ export class CodexTopics extends Context.Service<
             commentTopics.verify(speech, topic),
           );
           const thumbnailQuote = yield* thumbnailQuotes.generate(text);
-          return { topic, thumbnailQuote };
+          const people = yield* readPeople(peopleFile);
+          const tags = yield* videoTags.generate(text, {
+            title: topicTitle(topic),
+            people: peopleForTranscript(people, text).map(({ name, aliases }) => ({
+              name,
+              aliases,
+            })),
+          });
+          return { topic, thumbnailQuote, tags };
         },
         Effect.timeout(topicGenerationTimeoutMs),
         Effect.mapError((error) =>
