@@ -163,7 +163,8 @@ discarded.
 
 Luna first selects useful comment IDs in batches of up to 100 text bodies.
 It retains possible nicknames and ambiguous comments; selected texts stay unchanged.
-Sol extracts nickname candidates in batches of up to 50 selected bodies.
+Sol identifies nickname spellings in batches of up to 50 selected bodies;
+the application finds their exact quotes and comment IDs in the original texts.
 Each stage runs at most two isolated calls concurrently and combines all results
 before proceeding. Failed filtering or extraction retries the title instead of
 using an incomplete sample.

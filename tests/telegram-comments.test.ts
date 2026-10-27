@@ -235,7 +235,7 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
     Layer.provide(
       spawnerLayer((command, prompt) => {
         const batch = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1)) as typeof comments;
-        const comment = batch[0]!;
+        expect(batch.length).toBeLessThanOrEqual(50);
         commands.push(command);
         active++;
         maxActive = Math.max(maxActive, active);
@@ -246,14 +246,7 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
           onExit: () => {
             active--;
           },
-          value: {
-            candidates: [
-              {
-                nick: "Ворон",
-                mentions: [{ commentId: comment.id, quote: comment.text }],
-              },
-            ],
-          },
+          value: { nicks: ["Ворон"] },
         };
       }),
     ),
@@ -273,18 +266,10 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
   expect(active).toBe(0);
   expect(new Set(commands.map((command) => command.options.cwd)).size).toBe(10);
   expect(result.candidates).toHaveLength(1);
-  expect(result.candidates[0]?.mentions.map((mention) => mention.commentId)).toEqual([
-    "1",
-    "51",
-    "101",
-    "151",
-    "201",
-    "251",
-    "301",
-    "351",
-    "401",
-    "451",
-  ]);
+  const ids = result.candidates[0]!.mentions.map((mention) => mention.commentId);
+  expect(ids).toHaveLength(50);
+  expect(new Set(ids).size).toBe(50);
+  expect(ids).toEqual(expect.arrayContaining(["1", "51", "451"]));
 });
 
 it("filters bodies in parallel Luna batches while preserving selected text and excluding author metadata", async () => {
@@ -459,17 +444,13 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
     { id: "a", text: "Это Ворон." },
     { id: "b", text: "Ворон снова спорит." },
   ];
-  const candidate = {
-    nick: "Ворон",
-    mentions: comments.map((entry) => ({ commentId: entry.id, quote: entry.text })),
-  };
   const draft = (topic: string) => ({
     topic,
     subjects: [{ name: "Ворон", transcriptQuote: transcript, commentIds: ["a", "b"] }],
   });
   const responses = [
     { keepIds: ["a", "b"] },
-    { candidates: [candidate] },
+    { nicks: ["Ворон"] },
     draft("Ворон возвращается в стриминг"),
     {
       supported: false,
