@@ -143,7 +143,8 @@ export TG_PROFILE=personal
 bun run topics
 ```
 
-It uses `gpt-6.1-sol` for nickname extraction, titles and independent review,
+It uses `gpt-6-luna` to filter comment noise and `gpt-6.1-sol` for nickname extraction,
+titles and independent review,
 through the saved Codex ChatGPT login, with no transcription
 API key. This uses that account's Codex limits. The transcript and selected comment
 bodies are sent to OpenAI;
@@ -160,7 +161,12 @@ selecting the first 500; an incomplete scan is retried. Empty bodies count towar
 the limit but are excluded from model input. Commenter names and usernames are
 discarded.
 
-Codex extracts nickname candidates in batches of up to 100 comment bodies.
+Luna first selects useful comment IDs in batches of up to 100 text bodies.
+It retains possible nicknames and ambiguous comments; selected texts stay unchanged.
+Sol extracts nickname candidates in batches of up to 50 selected bodies.
+Each stage runs at most two isolated calls concurrently and combines all results
+before proceeding. Failed filtering or extraction retries the title instead of
+using an incomplete sample.
 Candidates need literal quoted evidence in at least two distinct comment bodies;
 copied bodies count once. A fresh model call combines candidates with the captions
 to produce the topic, with a speech quote and supporting comment IDs for each
@@ -180,8 +186,8 @@ toward this limit. Repeated nickname candidates are merged without counting the
 same comment twice. Model transport and usage errors use the normal retry queue.
 If no topic passes, the title stays queued for the existing retry schedule.
 This check also applies to topics generated through the registry fallback.
-`TOPIC_MODEL`, `TOPIC_EXTRACT_MODEL` and `TOPIC_REVIEW_MODEL` configure the three
-roles. The reviewer uses medium reasoning; extraction and generation use low
+`TOPIC_FILTER_MODEL`, `TOPIC_MODEL`, `TOPIC_EXTRACT_MODEL` and `TOPIC_REVIEW_MODEL`
+configure the four roles. The reviewer uses medium reasoning; filtering, extraction and generation use low
 reasoning, and every call starts an isolated session.
 
 Titles should name internet personalities when they are the main subject. If
