@@ -232,7 +232,7 @@ describe("captions and title updates", () => {
     expect(await client.captions(uploaded)).toBeUndefined();
   });
 
-  it("preserves snippet fields and reconciles a lost update response without a second PUT", async () => {
+  it("preserves snippet fields and existing tags and reconciles a lost response without a second PUT", async () => {
     let current = { ...snippet };
     let writes = 0;
     const client = new YouTubeClient(auth, async (url, init) => {
@@ -241,13 +241,42 @@ describe("captions and title updates", () => {
         return Response.json({ items: [{ id: "abcdefghijk", snippet: current }] });
       const body = JSON.parse(init.body as string);
       expect(body.status).toBeUndefined();
-      expect(body.snippet).toEqual({ ...snippet, channelId: undefined, title: "Новая тема" });
-      current = { ...snippet, title: body.snippet.title };
+      expect(body.snippet).toEqual({
+        ...snippet,
+        channelId: undefined,
+        title: "Новая тема",
+        tags: ["keep", "these", "новая игра"],
+      });
+      current = { ...snippet, title: body.snippet.title, tags: body.snippet.tags };
       writes++;
       throw new Error("Response lost after accepted update");
     });
-    await expect(client.updateTitle(uploaded, "Новая тема")).rejects.toThrow("Response lost");
-    expect(await client.updateTitle(uploaded, "Новая тема")).toBe("applied");
+    await expect(
+      client.updateTitle(uploaded, "Новая тема", null, ["новая игра", "KEEP"]),
+    ).rejects.toThrow("Response lost");
+    expect(await client.updateTitle(uploaded, "Новая тема", null, ["новая игра", "KEEP"])).toBe(
+      "applied",
+    );
+    expect(writes).toBe(1);
+  });
+
+  it("adds missing tags even if the title already matches", async () => {
+    const title = "Мэддисон о новой игре";
+    let current = { ...snippet, title };
+    let writes = 0;
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (init?.method !== "PUT")
+        return Response.json({ items: [{ id: "abcdefghijk", snippet: current }] });
+      const body = JSON.parse(init.body as string);
+      expect(body.snippet.title).toBe(title);
+      expect(body.snippet.tags).toEqual(["keep", "these", "новая игра"]);
+      current = { ...current, tags: body.snippet.tags };
+      writes++;
+      return Response.json({ id: "abcdefghijk" });
+    });
+    expect(await client.updateTitle(uploaded, title, null, ["новая игра"])).toBe("applied");
+    expect(await client.updateTitle(uploaded, title, null, ["новая игра"])).toBe("applied");
     expect(writes).toBe(1);
   });
 

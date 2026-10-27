@@ -276,6 +276,16 @@ command, separate from the production title worker.
 YouTube does not guarantee automatic captions. Until a usable Russian track is
 available, the video retains its initial caption/date title and the app retries.
 
+New metadata generations also select search tags from the full captions, including
+all clearly named people, brands, platforms, works and places. Tags use one word,
+occasionally two, and neutral language. Reviewed titles and the confirmed people
+registry supply corrected spellings for caption errors. Tags are
+saved with the topic and thumbnail quote before the transcript is discarded, then
+added to the video's existing YouTube tags alongside the title update. Duplicates
+are removed and the combined list respects YouTube's tag length limit. `cli status`
+includes the saved tags. Use `titles --regenerate` to generate tags for videos
+whose metadata was already processed.
+
 ## Thumbnail quotes and PNGs
 
 New topic generations also select a one-to-four-word continuous excerpt of the

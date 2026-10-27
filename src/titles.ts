@@ -3,6 +3,7 @@ import { attempt, Settings } from "./core.ts";
 import { listJobs, runSql, Store, type Job } from "./database.ts";
 import { commentsReadyAt, titleGenerationVersion, Topics, topicTitle } from "./topic.ts";
 import { YouTube } from "./youtube.ts";
+import { VideoTags } from "./video-tags.ts";
 
 const TitleJob = Schema.Struct({
   job_id: Schema.String,
@@ -11,6 +12,7 @@ const TitleJob = Schema.Struct({
   transcript: Schema.NullOr(Schema.String),
   topic: Schema.NullOr(Schema.String),
   thumbnail_quote: Schema.NullOr(Schema.String),
+  tags: Schema.NullOr(Schema.fromJsonString(VideoTags.fields.tags)),
   generation_version: Schema.BigInt,
   title: Schema.NullOr(Schema.String),
   attempts: Schema.BigInt,
@@ -153,23 +155,34 @@ const currentTopic = Effect.fn("currentTopic")(function* (
   job: Job,
   now: DateTime.Utc,
 ) {
-  if (item.generation_version === BigInt(titleGenerationVersion) && item.topic) return item.topic;
+  if (item.generation_version === BigInt(titleGenerationVersion) && item.topic)
+    return {
+      topic: item.topic,
+      tags: item.tags ?? undefined,
+    };
   const text = yield* readTranscript(item, job, now);
   if (!text) return;
   const topics = yield* Topics;
-  const { topic, thumbnailQuote } = yield* topics.summarize(text, {
+  const { topic, thumbnailQuote, tags } = yield* topics.summarize(text, {
     channel: job.channel,
     messageId: job.message_id.toString(),
     publishedAt: job.published_at,
   });
   // Retain the previous remote title until the write is confirmed.
   yield* runSql(
-    "Save topic and discard transcript",
-    `UPDATE video_titles SET topic=?, thumbnail_quote=?, generation_version=?,
+    "Save video metadata and discard transcript",
+    `UPDATE video_titles SET topic=?, thumbnail_quote=?, tags=?, generation_version=?,
       transcript=NULL, updated_at=? WHERE job_id=?`,
-    [topic, thumbnailQuote, titleGenerationVersion, DateTime.formatIso(now), job.id],
+    [
+      topic,
+      thumbnailQuote,
+      JSON.stringify(tags),
+      titleGenerationVersion,
+      DateTime.formatIso(now),
+      job.id,
+    ],
   );
-  return topic;
+  return { topic, tags };
 });
 
 const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: Job) {
@@ -184,11 +197,11 @@ const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: J
     return;
   }
   if (yield* waitForComments(item, job, now)) return;
-  const topic = yield* currentTopic(item, job, now);
-  if (!topic) return;
-  const title = topicTitle(topic);
-  const outcome = yield* attempt("Apply topic to YouTube title", (signal) =>
-    client.updateTitle(job, title, item.title, signal),
+  const metadata = yield* currentTopic(item, job, now);
+  if (!metadata) return;
+  const title = topicTitle(metadata.topic);
+  const outcome = yield* attempt("Apply YouTube title and tags", (signal) =>
+    client.updateTitle(job, title, item.title, metadata.tags, signal),
   );
   yield* runSql(
     "Save title result",

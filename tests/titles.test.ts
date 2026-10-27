@@ -47,7 +47,11 @@ async function fixture(
         enabled: true,
         summarize: (text, source) =>
           summarize(text, source).pipe(
-            Effect.map((topic) => ({ topic, thumbnailQuote: "Большой рассказ" })),
+            Effect.map((topic) => ({
+              topic,
+              thumbnailQuote: "Большой рассказ",
+              tags: ["компьютерные игры", "впечатления"],
+            })),
           ),
       }),
     ),
@@ -89,7 +93,13 @@ it("waits one hour from the original Telegram post even with --now and sends sou
       reads++;
       return "Большой рассказ про новую компьютерную игру.";
     }
-    override async updateTitle(): Promise<"applied"> {
+    override async updateTitle(
+      _job: Job,
+      _title: string,
+      _previous?: string | null,
+      tags?: readonly string[],
+    ): Promise<"applied"> {
+      expect(tags).toEqual(["компьютерные игры", "впечатления"]);
       return "applied";
     }
   }
@@ -125,7 +135,7 @@ it("waits one hour from the original Telegram post even with --now and sends sou
   );
 });
 
-it("keeps a generated comment-assisted topic across a lost YouTube update response", async () => {
+it("keeps generated topic and tags across a lost YouTube update response", async () => {
   let generations = 0;
   let updates = 0;
   class Client extends YouTubeClient {
@@ -133,7 +143,13 @@ it("keeps a generated comment-assisted topic across a lost YouTube update respon
     override async captions() {
       return "Большой рассказ про новую компьютерную игру.";
     }
-    override async updateTitle(): Promise<"applied"> {
+    override async updateTitle(
+      _job: Job,
+      _title: string,
+      _previous?: string | null,
+      tags?: readonly string[],
+    ): Promise<"applied"> {
+      expect(tags).toEqual(["компьютерные игры", "впечатления"]);
       if (++updates === 1) throw new Error("Lost YouTube response");
       return "applied";
     }
@@ -150,6 +166,7 @@ it("keeps a generated comment-assisted topic across a lost YouTube update respon
         status: "pending",
         topic: "Впечатления от новой компьютерной игры",
         thumbnail_quote: "Большой рассказ",
+        tags: ["компьютерные игры", "впечатления"],
         transcript: null,
       });
       yield* drainTitles(1, true);

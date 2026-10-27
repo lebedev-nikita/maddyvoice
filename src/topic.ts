@@ -2,6 +2,7 @@ import { load } from "cheerio";
 import { Config, Context, DateTime, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
 import { ThumbnailQuote, validateThumbnailQuote } from "./thumbnail-quote.ts";
+import { VideoTags, validateVideoTags } from "./video-tags.ts";
 
 export const titleGenerationVersion = 1;
 // Five 6-minute extraction batches, three 3-minute generation/review pairs and Telegram reads.
@@ -46,7 +47,11 @@ export function captionText(srt: string) {
 const Topic = Schema.Struct({
   topic: Schema.String.check(Schema.isMinLength(8), Schema.isMaxLength(75)),
 });
-const GeneratedTopic = Schema.Struct({ ...Topic.fields, ...ThumbnailQuote.fields });
+const GeneratedTopic = Schema.Struct({
+  ...Topic.fields,
+  ...ThumbnailQuote.fields,
+  ...VideoTags.fields,
+});
 export type GeneratedTopic = typeof GeneratedTopic.Type;
 export const Transcript = Schema.Struct({
   text: Schema.String.check(Schema.isMinLength(10), Schema.isMaxLength(200_000)),
@@ -112,6 +117,7 @@ export class Topics extends Context.Service<
           return {
             topic: validateTopic(result),
             thumbnailQuote: validateThumbnailQuote(result, text),
+            tags: validateVideoTags(result),
           };
         });
       return Topics.of({ enabled: endpoint.length > 0, summarize });
