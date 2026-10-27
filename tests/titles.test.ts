@@ -1,12 +1,12 @@
 import { afterEach, expect, it } from "vite-plus/test";
-import { Effect, Layer } from "effect";
+import { DateTime, Effect, Layer } from "effect";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AppError, Settings } from "../src/core.ts";
 import { getCursor, listJobs, runSql, savePosts, Store, type Job } from "../src/database.ts";
-import { Topics } from "../src/topic.ts";
-import { drainTitles, listTitles } from "../src/titles.ts";
+import { commentsReadyAt, Topics } from "../src/topic.ts";
+import { drainTitles, listTitles, regenerateTitles } from "../src/titles.ts";
 import { YouTube, YouTubeClient } from "../src/youtube.ts";
 
 const temporary: string[] = [];
@@ -43,12 +43,15 @@ async function fixture(client: YouTubeClient, summarize: Topics["Service"]["summ
   );
 }
 
-const uploaded = Effect.fn("test.uploaded")(function* (id: number) {
+const uploaded = Effect.fn("test.uploaded")(function* (
+  id: number,
+  publishedAt = "2026-10-26T10:20:30.000Z",
+) {
   yield* savePosts(
     [
       {
         id,
-        date: "2026-10-26T10:20:30.000Z",
+        date: publishedAt,
         audio: ["https://example.com/voice.ogg"],
         images: [],
         forwarded: false,
@@ -65,6 +68,85 @@ const uploaded = Effect.fn("test.uploaded")(function* (id: number) {
   );
 });
 
+it("waits one hour from the original Telegram post even with --now and sends source identity", async () => {
+  let reads = 0;
+  let generations = 0;
+  class Client extends YouTubeClient {
+    override async verifyChannel() {}
+    override async captions() {
+      reads++;
+      return "Большой рассказ про новую компьютерную игру.";
+    }
+    override async updateTitle(): Promise<"applied"> {
+      return "applied";
+    }
+  }
+  const layer = await fixture(new Client(auth), (_text, source) => {
+    generations++;
+    expect(source.channel).toBe("maddysontg");
+    expect(source.messageId).toBe("1");
+    return Effect.succeed("Впечатления от новой компьютерной игры");
+  });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const recent = DateTime.formatIso(DateTime.add(now, { minutes: -59 }));
+      yield* uploaded(1, recent);
+      yield* drainTitles(1, true);
+      expect(reads).toBe(0);
+      expect(generations).toBe(0);
+      expect((yield* listTitles())[0]).toMatchObject({
+        status: "pending",
+        next_attempt: BigInt(commentsReadyAt(recent)),
+        attempts: 0n,
+      });
+      yield* runSql(
+        "Test elapsed comment wait",
+        "UPDATE jobs SET published_at=? WHERE message_id=1",
+        [DateTime.formatIso(DateTime.add(now, { minutes: -61 }))],
+      );
+      yield* drainTitles(1, true);
+      expect(reads).toBe(1);
+      expect(generations).toBe(1);
+      expect((yield* listTitles())[0]?.status).toBe("applied");
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+it("keeps a generated comment-assisted topic across a lost YouTube update response", async () => {
+  let generations = 0;
+  let updates = 0;
+  class Client extends YouTubeClient {
+    override async verifyChannel() {}
+    override async captions() {
+      return "Большой рассказ про новую компьютерную игру.";
+    }
+    override async updateTitle(): Promise<"applied"> {
+      if (++updates === 1) throw new Error("Lost YouTube response");
+      return "applied";
+    }
+  }
+  const layer = await fixture(new Client(auth), () => {
+    generations++;
+    return Effect.succeed("Впечатления от новой компьютерной игры");
+  });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* uploaded(1);
+      yield* drainTitles(1, true);
+      expect((yield* listTitles())[0]).toMatchObject({
+        status: "pending",
+        topic: "Впечатления от новой компьютерной игры",
+        transcript: null,
+      });
+      yield* drainTitles(1, true);
+      expect(generations).toBe(1);
+      expect(updates).toBe(2);
+      expect((yield* listTitles())[0]?.status).toBe("applied");
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
 it("caches captions over model failures, discards text after a topic, and never changes upload state or cursor", async () => {
   let reads = 0;
   let generations = 0;
@@ -75,7 +157,7 @@ it("caches captions over model failures, discards text after a topic, and never 
       return "Большой рассказ про новую компьютерную игру.";
     }
     override async updateTitle(_job: Job, title: string): Promise<"applied"> {
-      expect(title).toBe("Впечатления от новой компьютерной игры | Мэддисон");
+      expect(title).toBe("Мэддисон впечатления от новой компьютерной игры");
       return "applied";
     }
   }
@@ -134,9 +216,9 @@ it("persists caption backoff and a daily quota cap even when --now is used", asy
   );
 });
 
-it("requeues old title formats from saved topics and retains the previous title over retries", async () => {
-  const oldTitle = "Мэддисон — Впечатления от новой компьютерной игры | 2026-10-26";
-  const title = "Впечатления от новой компьютерной игры | Мэддисон";
+it("reformats a current-policy topic and retains the previous title over retries", async () => {
+  const oldTitle = "Впечатления от новой компьютерной игры | Мэддисон";
+  const title = "Мэддисон впечатления от новой компьютерной игры";
   let updates = 0;
   class Client extends YouTubeClient {
     override async verifyChannel() {}
@@ -165,7 +247,7 @@ it("requeues old title formats from saved topics and retains the previous title 
       yield* runSql(
         "Seed a legacy title",
         `INSERT INTO video_titles
-      (job_id,video_id,status,topic,title,created_at,updated_at) VALUES (?,?,'applied',?,?,?,?)`,
+      (job_id,video_id,status,topic,title,created_at,updated_at,generation_version) VALUES (?,?,'applied',?,?,?,?,1)`,
         [
           "maddysontg-1-0",
           "abcdefghijk",
@@ -194,6 +276,56 @@ it("requeues old title formats from saved topics and retains the previous title 
       expect(updates).toBe(2);
       expect(yield* listJobs()).toEqual(jobs);
       expect(yield* getCursor()).toBe(900);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+it("regenerates legacy topics and keeps the previous remote title after a failed update", async () => {
+  let generations = 0;
+  let updates = 0;
+  const oldTitle = "Старое название | Мэддисон";
+  class Client extends YouTubeClient {
+    override async verifyChannel() {}
+    override async captions() {
+      return "Речь про выбор новой компьютерной игры.";
+    }
+    override async updateTitle(
+      _job: Job,
+      title: string,
+      previous?: string | null,
+    ): Promise<"applied"> {
+      expect(previous).toBe(oldTitle);
+      expect(title).toBe("Мэддисон выбирает новую игру");
+      if (++updates === 1) throw new Error("Failure before remote update");
+      return "applied";
+    }
+  }
+  const layer = await fixture(new Client(auth), () => {
+    generations++;
+    return Effect.succeed("выбирает новую игру");
+  });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* uploaded(1);
+      yield* drainTitles(0, true);
+      yield* runSql(
+        "Seed legacy title policy",
+        "UPDATE video_titles SET status='applied',topic='Старый пересказ',title=?,generation_version=0",
+        [oldTitle],
+      );
+      updates = 0;
+      yield* drainTitles(1, true);
+      expect((yield* listTitles())[0]).toMatchObject({
+        status: "pending",
+        title: oldTitle,
+        topic: "выбирает новую игру",
+        generation_version: 1n,
+      });
+      yield* drainTitles(1, true);
+      expect(generations).toBe(1);
+      expect((yield* listTitles())[0]?.status).toBe("applied");
+      yield* regenerateTitles();
+      expect((yield* listTitles())[0]).toMatchObject({ status: "pending", generation_version: 0n });
     }).pipe(Effect.provide(layer)),
   );
 });

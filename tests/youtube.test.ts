@@ -31,11 +31,134 @@ const job: Job = {
   video_size: 8n,
   upload_session: null,
   upload_privacy: null,
+  publication_privacy: null,
+  catchup_batch: null,
   youtube_id: null,
   created_at: "",
   updated_at: "",
 };
 const session = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test";
+
+describe("ordered public release", () => {
+  const uploaded = {
+    ...job,
+    status: "uploading" as const,
+    youtube_id: "abcdefghijk",
+    publication_privacy: "public" as const,
+  };
+  const snippet = { channelId: "UCtest", description: "maddyvoice:maddysontg-7596-0" };
+
+  it("waits for processing and preserves status settings when releasing a private video", async () => {
+    let processing = "processing";
+    let puts = 0;
+    const original = {
+      privacyStatus: "private",
+      uploadStatus: "processed",
+      embeddable: false,
+      license: "youtube",
+      publicStatsViewable: false,
+      selfDeclaredMadeForKids: false,
+      containsSyntheticMedia: false,
+    };
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      expect(url).toContain("/youtube/v3/videos?");
+      if (init?.method !== "PUT")
+        return Response.json({
+          items: [
+            {
+              id: "abcdefghijk",
+              snippet,
+              status: original,
+              processingDetails: { processingStatus: processing },
+            },
+          ],
+        });
+      puts++;
+      expect(url.endsWith("part=status")).toBe(true);
+      const body = JSON.parse(init.body as string);
+      expect(body.snippet).toBeUndefined();
+      const { uploadStatus: _uploadStatus, ...writable } = original;
+      expect(body.status).toEqual({ ...writable, privacyStatus: "public" });
+      return Response.json({ id: "abcdefghijk", status: { ...original, privacyStatus: "public" } });
+    });
+    expect(await client.publish(uploaded, "public")).toBe(false);
+    expect(puts).toBe(0);
+    processing = "succeeded";
+    expect(await client.publish(uploaded, "public")).toBe(true);
+    expect(puts).toBe(1);
+  });
+
+  it("reconciles a lost publication response without sending a second visibility change", async () => {
+    let visibility = "private";
+    let puts = 0;
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (init?.method !== "PUT")
+        return Response.json({
+          items: [
+            {
+              id: "abcdefghijk",
+              snippet,
+              status: { privacyStatus: visibility, uploadStatus: "processed" },
+              processingDetails: { processingStatus: "succeeded" },
+            },
+          ],
+        });
+      puts++;
+      visibility = "public";
+      throw new Error("Publication response lost");
+    });
+    await expect(client.publish(uploaded, "public")).rejects.toThrow("Publication response lost");
+    expect(await client.publish(uploaded, "public")).toBe(true);
+    expect(puts).toBe(1);
+  });
+
+  it("requires review for failed processing, external scheduling and unexpected visibility", async () => {
+    let status = { privacyStatus: "private", uploadStatus: "failed" };
+    let publishAt: string | undefined;
+    const client = new YouTubeClient(auth, async (url, init) => {
+      expect(init?.method).not.toBe("PUT");
+      return url.includes("oauth2")
+        ? Response.json({ access_token: "access" })
+        : Response.json({
+            items: [{ id: "abcdefghijk", snippet, status: { ...status, publishAt } }],
+          });
+    });
+    await expect(client.publish(uploaded, "public")).rejects.toBeInstanceOf(UploadReview);
+    status = { privacyStatus: "private", uploadStatus: "processed" };
+    publishAt = "2030-01-01T00:00:00Z";
+    await expect(client.publish(uploaded, "public")).rejects.toBeInstanceOf(UploadReview);
+    publishAt = undefined;
+    status = { privacyStatus: "unlisted", uploadStatus: "processed" };
+    await expect(client.publish(uploaded, "public")).rejects.toBeInstanceOf(UploadReview);
+  });
+
+  it("refuses a foreign channel and a mismatched response instead of advancing publication", async () => {
+    let channelId = "OTHER";
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (init?.method !== "PUT")
+        return Response.json({
+          items: [
+            {
+              id: "abcdefghijk",
+              snippet: { ...snippet, channelId },
+              status: { privacyStatus: "private", uploadStatus: "processed" },
+            },
+          ],
+        });
+      return Response.json({
+        id: "wrongvideo1",
+        status: { privacyStatus: "public", uploadStatus: "processed" },
+      });
+    });
+    await expect(client.publish(uploaded, "public")).rejects.toThrow("configured channel");
+    channelId = "UCtest";
+    await expect(client.publish(uploaded, "public")).rejects.toThrow("did not confirm");
+  });
+});
+
 const directories: string[] = [];
 afterEach(async () => {
   for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true });
@@ -150,16 +273,19 @@ describe("captions and title updates", () => {
     expect(() => captionText("not a caption file")).toThrow("no usable speech");
     const title = topicTitle("Очень длинная тема ".repeat(100));
     expect(Array.from(title).length).toBeLessThanOrEqual(100);
-    expect(title.endsWith(" | Мэддисон")).toBe(true);
+    expect(title.startsWith("Мэддисон ")).toBe(true);
   });
 
-  it("uses topic-first titles for new uploads, including before captions are ready", () => {
-    expect(videoMetadata(job, "public").snippet.title).toBe("Голосовое сообщение | Мэддисон");
+  it("puts the author first without a trailing signature", () => {
+    expect(topicTitle("Высмеивает Зио и советует принять поражение")).toBe(
+      "Мэддисон высмеивает Зио и советует принять поражение",
+    );
+    expect(videoMetadata(job, "public").snippet.title).toBe("Мэддисон голосовое сообщение");
     expect(
       videoMetadata({ ...job, caption: "новая игра\nДругой текст" }, "public").snippet.title,
-    ).toBe("Новая игра | Мэддисон");
-    expect(topicTitle("  новая тема\nпро игру  ")).toBe("Новая тема про игру | Мэддисон");
-    expect(topicTitle("😀".repeat(100)).endsWith(" | Мэддисон")).toBe(true);
+    ).toBe("Мэддисон новая игра");
+    expect(topicTitle("  новая тема\nпро игру  ")).toBe("Мэддисон новая тема про игру");
+    expect(topicTitle("😀".repeat(100)).startsWith("Мэддисон ")).toBe(true);
     expect(Array.from(topicTitle("😀".repeat(100))).length).toBe(100);
   });
 

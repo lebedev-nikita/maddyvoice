@@ -1,7 +1,7 @@
 import { DateTime, Effect, Schema } from "effect";
 import { attempt, Settings } from "./core.ts";
 import { listJobs, runSql, Store, type Job } from "./database.ts";
-import { Topics, topicTitle } from "./topic.ts";
+import { commentsReadyAt, titleGenerationVersion, Topics, topicTitle } from "./topic.ts";
 import { YouTube } from "./youtube.ts";
 
 const TitleJob = Schema.Struct({
@@ -10,6 +10,7 @@ const TitleJob = Schema.Struct({
   status: Schema.Literals(["pending", "applied", "manual", "review"]),
   transcript: Schema.NullOr(Schema.String),
   topic: Schema.NullOr(Schema.String),
+  generation_version: Schema.BigInt,
   title: Schema.NullOr(Schema.String),
   attempts: Schema.BigInt,
   next_attempt: Schema.BigInt,
@@ -42,7 +43,12 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
     [iso, iso, DateTime.toEpochMillis(now) + 15 * 60_000, channel],
   );
   for (const item of yield* listTitles()) {
-    if (item.status !== "applied" || !item.topic || item.title === topicTitle(item.topic)) continue;
+    if (item.status !== "applied" || !item.topic) continue;
+    if (
+      item.generation_version === BigInt(titleGenerationVersion) &&
+      item.title === topicTitle(item.topic)
+    )
+      continue;
     // Retain the previous title for remote reconciliation, including after a lost response.
     yield* runSql(
       "Queue title format update",
@@ -50,6 +56,16 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
       [iso, item.job_id],
     );
   }
+});
+
+export const regenerateTitles = Effect.fn("regenerateTitles")(function* () {
+  yield* queueTitles(yield* DateTime.now);
+  yield* runSql(
+    "Queue title regeneration without discarding remote reconciliation state",
+    `UPDATE video_titles SET status='pending',generation_version=0,next_attempt=0,error=NULL
+      WHERE status IN ('pending','applied') AND job_id IN (SELECT id FROM jobs WHERE status='uploaded' AND channel=?)`,
+    [(yield* Settings).channel],
+  );
 });
 
 const reserveCaptionCheck = Effect.fn("reserveCaptionCheck")(function* (day: string) {
@@ -110,11 +126,54 @@ const readTranscript = Effect.fn("readTranscript")(function* (
   return text;
 });
 
+const waitForComments = Effect.fn("waitForComments")(function* (
+  item: TitleJob,
+  job: Job,
+  now: DateTime.Utc,
+) {
+  if (item.topic && item.generation_version === BigInt(titleGenerationVersion)) return false;
+  const readyAt = commentsReadyAt(job.published_at);
+  if (DateTime.toEpochMillis(now) >= readyAt) return false;
+  yield* runSql(
+    "Wait for Telegram comments to accumulate",
+    "UPDATE video_titles SET next_attempt=?, error=?, updated_at=? WHERE job_id=?",
+    [
+      readyAt,
+      "Waiting one hour after Telegram publication for comments",
+      DateTime.formatIso(now),
+      job.id,
+    ],
+  );
+  return true;
+});
+
+const currentTopic = Effect.fn("currentTopic")(function* (
+  item: TitleJob,
+  job: Job,
+  now: DateTime.Utc,
+) {
+  if (item.generation_version === BigInt(titleGenerationVersion) && item.topic) return item.topic;
+  const text = yield* readTranscript(item, job, now);
+  if (!text) return;
+  const topics = yield* Topics;
+  const topic = yield* topics.summarize(text, {
+    channel: job.channel,
+    messageId: job.message_id.toString(),
+    publishedAt: job.published_at,
+  });
+  // Retain the previous remote title until the write is confirmed.
+  yield* runSql(
+    "Save topic and discard transcript",
+    `UPDATE video_titles SET topic=?, generation_version=?,
+      transcript=NULL, updated_at=? WHERE job_id=?`,
+    [topic, titleGenerationVersion, DateTime.formatIso(now), job.id],
+  );
+  return topic;
+});
+
 const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: Job) {
   const client = yield* (yield* YouTube).load();
-  const topics = yield* Topics;
   const now = yield* DateTime.now;
-  const iso = DateTime.formatIso(now);
   if (item.video_id !== job.youtube_id) {
     yield* runSql(
       "Pause mismatched title job",
@@ -123,27 +182,16 @@ const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: J
     );
     return;
   }
-  let topic = item.topic;
-  const text = topic ? undefined : yield* readTranscript(item, job, now);
-  if (!topic && !text) return;
-  if (!topic) {
-    topic = yield* topics.summarize(text ?? "");
-    const title = topicTitle(topic);
-    // Keep the topic before a remote mutation. A lost update response is reconciled by reading the title.
-    yield* runSql(
-      "Save topic and discard transcript",
-      `UPDATE video_titles SET topic=?, title=?,
-      transcript=NULL, updated_at=? WHERE job_id=?`,
-      [topic, title, iso, job.id],
-    );
-  }
+  if (yield* waitForComments(item, job, now)) return;
+  const topic = yield* currentTopic(item, job, now);
+  if (!topic) return;
   const title = topicTitle(topic);
   const outcome = yield* attempt("Apply topic to YouTube title", (signal) =>
     client.updateTitle(job, title, item.title, signal),
   );
   yield* runSql(
     "Save title result",
-    "UPDATE video_titles SET status=?, title=?, error=NULL, updated_at=? WHERE job_id=?",
+    "UPDATE video_titles SET status=?, title=?, next_attempt=0, error=NULL, updated_at=? WHERE job_id=?",
     [outcome, title, DateTime.formatIso(yield* DateTime.now), job.id],
   );
   yield* Effect.logInfo(

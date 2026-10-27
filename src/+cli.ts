@@ -8,10 +8,19 @@ import { getCursor, listJobs, Store, withWorkerLock } from "./database.ts";
 import { Media } from "./media.ts";
 import { manageService } from "./service.ts";
 import { Telegram } from "./telegram.ts";
-import { drainQueue, importHistory, poll, previewPost, resolveJob, retryJob } from "./worker.ts";
+import {
+  importHistory,
+  importCatchup,
+  drainQueue,
+  poll,
+  previewPost,
+  resolveJob,
+  retryJob,
+  scanAndPublish,
+} from "./worker.ts";
 import { authorizeYouTube, YouTube } from "./youtube.ts";
 import { Topics } from "./topic.ts";
-import { drainTitles, listTitles } from "./titles.ts";
+import { drainTitles, listTitles, regenerateTitles } from "./titles.ts";
 
 const services = Layer.mergeAll(
   Store.layer,
@@ -40,20 +49,16 @@ const run = Command.make(
         Effect.gen(function* () {
           const settings = yield* Settings;
           if (once) {
-            yield* poll();
-            yield* drainQueue(limit, test);
+            yield* scanAndPublish(limit, test);
             yield* drainTitles(1);
             return;
           }
           yield* Effect.logInfo(
             `Watching https://t.me/${settings.channel} every ${settings.pollSeconds}s`,
           );
-          const cycle = Effect.gen(function* () {
-            yield* poll().pipe(Effect.catch((error) => Effect.logError(error.message)));
-            yield* drainQueue(limit, test).pipe(
-              Effect.catch((error) => Effect.logWarning(error.message)),
-            );
-          });
+          const cycle = scanAndPublish(limit, test).pipe(
+            Effect.catch((error) => Effect.logWarning(error.message)),
+          );
           const titleCycle = drainTitles(1).pipe(
             Effect.catch((error) => Effect.logWarning(error.message)),
           );
@@ -83,7 +88,11 @@ const history = Command.make(
     months: Flag.Int("months").pipe(Flag.withSchema(positive), Flag.withDefault(2)),
   },
   ({ since, until, months }) =>
-    app(importHistory(Option.getOrUndefined(since), Option.getOrUndefined(until), months)),
+    app(
+      withWorkerLock(
+        importHistory(Option.getOrUndefined(since), Option.getOrUndefined(until), months),
+      ),
+    ),
 ).pipe(
   Command.withDescription(
     "Queue historical recordings (default: last two calendar months); --until is inclusive, dates are UTC",
@@ -91,19 +100,50 @@ const history = Command.make(
 );
 
 const upload = Command.make("upload", { limit, test }, ({ limit, test }) =>
-  app(withWorkerLock(drainQueue(limit, test))),
-).pipe(Command.withDescription("Publish queued recordings without checking the feed"));
+  app(withWorkerLock(scanAndPublish(limit, test))),
+).pipe(Command.withDescription("Refresh the feed and publish queued recordings in Telegram order"));
+
+const catchup = Command.make(
+  "catch-up",
+  {
+    days: Flag.Int("days").pipe(Flag.withSchema(positive), Flag.withDefault(14)),
+    allow: Flag.Boolean("allow-out-of-order").pipe(Flag.withDefault(false)),
+    limit,
+  },
+  ({ days, allow, limit }) =>
+    app(
+      withWorkerLock(
+        Effect.gen(function* () {
+          yield* importCatchup(days, allow);
+          yield* drainQueue(limit);
+        }),
+      ),
+    ),
+).pipe(
+  Command.withDescription(
+    "Import a complete recent window and authorize only those missing jobs behind the publication frontier",
+  ),
+);
 
 const titles = Command.make(
   "titles",
   {
     limit,
     now: Flag.Boolean("now").pipe(Flag.withDefault(false)),
+    regenerate: Flag.Boolean("regenerate").pipe(Flag.withDefault(false)),
   },
-  ({ limit, now }) => app(withWorkerLock(drainTitles(limit, now))),
+  ({ limit, now, regenerate }) =>
+    app(
+      withWorkerLock(
+        Effect.gen(function* () {
+          if (regenerate) yield* regenerateTitles();
+          yield* drainTitles(limit, now);
+        }),
+      ),
+    ),
 ).pipe(
   Command.withDescription(
-    "Name uploaded videos from YouTube captions; --now ignores retry times, not the daily quota",
+    "Name uploaded videos using captions and Telegram comments; --now respects the one-hour wait and daily quota",
   ),
 );
 
@@ -131,25 +171,52 @@ const status = Command.make("status", {}, () =>
           channel: config.channel,
           liveCursor: cursor ?? null,
           counts,
-          titles: titles.map(({ job_id, status, topic, title, attempts, next_attempt, error }) => ({
-            job_id,
-            status,
-            topic,
-            title,
-            attempts,
-            next_attempt,
-            error,
-          })),
+          titles: titles.map(
+            ({
+              job_id,
+              status,
+              topic,
+              title,
+              generation_version,
+              attempts,
+              next_attempt,
+              error,
+            }) => ({
+              job_id,
+              status,
+              topic,
+              title,
+              generation_version,
+              attempts,
+              next_attempt,
+              error,
+            }),
+          ),
           jobs: jobs.map(
-            ({ id, status, origin, source_url, published_at, attempts, error, youtube_id }) => ({
+            ({
               id,
               status,
               origin,
               source_url,
               published_at,
               attempts,
+              next_attempt,
               error,
               youtube_id,
+              publication_privacy,
+              catchup_batch,
+            }) => ({
+              id,
+              status,
+              origin,
+              source_url,
+              published_at,
+              attempts,
+              next_attempt,
+              error,
+              youtube_id,
+              publication_privacy,
+              catchup_batch,
             }),
           ),
         }),
@@ -211,6 +278,7 @@ root.pipe(
     run,
     scan,
     history,
+    catchup,
     upload,
     titles,
     preview,

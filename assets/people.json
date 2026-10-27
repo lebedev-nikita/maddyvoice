@@ -1,0 +1,13 @@
+[
+  {
+    "id": "zio",
+    "name": "Зио",
+    "aliases": [
+      { "text": "Зио", "context": [] },
+      { "text": "Зи", "context": ["фасольк"] },
+      { "text": "Zо", "context": ["фасольк"] }
+    ],
+    "sources": ["User correction on 2026-10-27: the person in recording 7572 is Зио, not Зи."],
+    "verifiedAt": "2026-10-27"
+  }
+]

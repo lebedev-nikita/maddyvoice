@@ -168,6 +168,17 @@ it("persists the session BEFORE video bytes and recovers a lost completion witho
     },
     async (url, init) => {
       if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (url.startsWith("https://www.googleapis.com/youtube/v3/videos?"))
+        return Response.json({
+          items: [
+            {
+              id: "abcdefghijk",
+              snippet: { channelId: "UCtest", description: "maddyvoice:maddysontg-8-0" },
+              status: { uploadStatus: "processed", privacyStatus: "private" },
+              processingDetails: { processingStatus: "succeeded" },
+            },
+          ],
+        });
       if (init?.method === "POST") {
         starts++;
         return new Response(null, { headers: { Location: session } });

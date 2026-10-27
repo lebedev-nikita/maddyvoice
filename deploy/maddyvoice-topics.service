@@ -1,5 +1,5 @@
 [Unit]
-Description=Maddyvoice topic generator through Codex GPT Luna
+Description=Maddyvoice topic generator through Codex
 Wants=network-online.target
 After=network-online.target
 
@@ -11,8 +11,18 @@ WorkingDirectory=/var/lib/maddyvoice-topics
 Environment=HOME=/var/lib/maddyvoice-topics
 Environment=CODEX_HOME=/home/pi/.codex
 Environment=CODEX_PATH=/opt/maddyvoice/bin/codex
-Environment=TOPIC_MODEL=gpt-6-luna
+Environment=TOPIC_MODEL=gpt-6.1-sol
+Environment=TOPIC_EXTRACT_MODEL=gpt-6.1-sol
+Environment=TOPIC_REVIEW_MODEL=gpt-6.1-sol
+Environment=TG_PROFILE=personal
+Environment=TG_PATH=/opt/maddyvoice/bin/tg
+Environment=XDG_CONFIG_HOME=/home/pi/.config
+Environment=XDG_DATA_HOME=/home/pi/.local/share
+Environment=XDG_CACHE_HOME=/home/pi/.cache
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 Environment=TOPICS_DATA_DIR=/var/lib/maddyvoice-topics
+EnvironmentFile=-/etc/maddyvoice-topics.env
 ExecStart=/opt/maddyvoice/bin/bun /opt/maddyvoice/src/+topics-server.ts
 Restart=always
 RestartSec=15
@@ -28,7 +38,10 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=tmpfs
 BindPaths=/home/pi/.codex
-ReadWritePaths=/var/lib/maddyvoice-topics /home/pi/.codex
+BindPaths=/home/pi/.config/tg-cli /home/pi/.local/share/tg-cli /home/pi/.local/share/WireCat /home/pi/.cache/tg-cli
+BindReadOnlyPaths=/home/pi/.bun/install/global/node_modules
+BindReadOnlyPaths=-/run/user/1000/bus
+ReadWritePaths=/var/lib/maddyvoice-topics /home/pi/.codex /home/pi/.config/tg-cli /home/pi/.local/share/tg-cli /home/pi/.local/share/WireCat /home/pi/.cache/tg-cli
 
 [Install]
 WantedBy=multi-user.target

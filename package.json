@@ -10,6 +10,7 @@
     "test": "vp test run",
     "build": "bun build src/+cli.ts src/+topics-server.ts --target=bun --packages=external --outdir=dist",
     "analyze": "fallow",
+    "check:comment-title": "bun scripts/+comment-title-check.ts",
     "topics": "bun src/+topics-server.ts"
   },
   "dependencies": {

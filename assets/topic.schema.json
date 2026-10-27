@@ -1,8 +1,32 @@
 {
   "type": "object",
   "properties": {
-    "topic": { "type": "string", "minLength": 8, "maxLength": 75 }
+    "topic": { "type": "string", "minLength": 8, "maxLength": 75 },
+    "subjects": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "type": "string" }
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "observed": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "suggested": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "evidence": { "type": "string", "minLength": 2, "maxLength": 600 },
+          "sources": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+          }
+        },
+        "required": ["observed", "suggested", "evidence", "sources"],
+        "additionalProperties": false
+      }
+    }
   },
-  "required": ["topic"],
+  "required": ["topic", "subjects", "candidates"],
   "additionalProperties": false
 }
