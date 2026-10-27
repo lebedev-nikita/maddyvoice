@@ -4,6 +4,7 @@ import { Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { CodexTopics } from "./codex.ts";
 import { CommentTopics } from "./comment-topics.ts";
 import { TelegramComments } from "./telegram-comments.ts";
+import { AppError } from "./core.ts";
 import { commentsReadyAt, TopicRequest } from "./topic.ts";
 
 const runtime = ManagedRuntime.make(
@@ -21,9 +22,10 @@ async function generateTopic(body: typeof TopicRequest.Type) {
       CodexTopics.use((service) => service.summarize(body.text, body.source)),
     );
     return Response.json({ topic });
-  } catch {
+  } catch (cause) {
     console.error(
-      "Topic failed; check Telegram profile, Codex login, model access and usage limits",
+      "Topic failed:",
+      cause instanceof AppError ? cause.message.split(":")[0] : "Unexpected runtime failure",
     );
     return new Response("Codex topic generation failed", { status: 502 });
   } finally {

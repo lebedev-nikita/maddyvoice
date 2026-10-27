@@ -142,6 +142,24 @@ export function videoMetadata(job: Job, privacy: "public" | "private" | "unliste
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
+async function youtubeErrorReason(response: Response) {
+  const Problem = Schema.Struct({
+    error: Schema.Struct({
+      errors: Schema.Array(
+        Schema.Struct({
+          reason: Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)),
+        }),
+      ),
+    }),
+  });
+  try {
+    const problem = Schema.decodeUnknownSync(Problem)(await response.json());
+    return problem.error.errors.map((error) => error.reason).join(", ");
+  } catch {
+    return "unknown";
+  }
+}
+
 export class YouTubeClient {
   private accessToken = "";
   constructor(
@@ -461,10 +479,8 @@ export class YouTubeClient {
       signal,
     );
     if (!updated.ok) {
-      await updated.body?.cancel();
-      throw new Error(
-        `Update YouTube title HTTP ${updated.status}; check youtube.force-ssl authorization`,
-      );
+      const reason = await youtubeErrorReason(updated);
+      throw new Error(`Update YouTube title HTTP ${updated.status} (${reason})`);
     }
     if (Schema.decodeUnknownSync(Video)(await updated.json()).id !== job.youtube_id)
       throw new Error("YouTube returned a different video after title update");

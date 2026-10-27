@@ -264,6 +264,25 @@ describe("captions and title updates", () => {
     await expect(client.updateTitle(uploaded, "Новая тема")).rejects.toThrow("configured channel");
   });
 
+  it("reports YouTube's reason for rejected title updates without logging response text", async () => {
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (init?.method !== "PUT") return Response.json({ items: [{ id: "abcdefghijk", snippet }] });
+      return Response.json(
+        {
+          error: {
+            message: "private response details",
+            errors: [{ reason: "quotaExceeded", message: "private response details" }],
+          },
+        },
+        { status: 403 },
+      );
+    });
+    await expect(client.updateTitle(uploaded, "Новая тема")).rejects.toThrow(
+      "Update YouTube title HTTP 403 (quotaExceeded)",
+    );
+  });
+
   it("decodes subtitle text and removes overlapping ASR cues", () => {
     expect(
       captionText(
