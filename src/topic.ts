@@ -3,6 +3,8 @@ import { Config, Context, DateTime, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
 
 export const titleGenerationVersion = 1;
+// Five extraction batches and up to three generation/review pairs have separate 3-minute limits.
+export const topicGenerationTimeoutMs = 40 * 60_000;
 
 export function topicTitle(topic: string) {
   const prefix = "Мэддисон ";
@@ -92,7 +94,10 @@ export class Topics extends Context.Service<
           const response = await fetch(`${endpoint.replace(/\/$/, "")}/topic`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            signal: AbortSignal.any([signal, AbortSignal.timeout(200_000)]),
+            signal: AbortSignal.any([
+              signal,
+              AbortSignal.timeout(topicGenerationTimeoutMs + 30_000),
+            ]),
             body: JSON.stringify(body),
           });
           if (!response.ok) {
