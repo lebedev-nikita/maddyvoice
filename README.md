@@ -104,7 +104,8 @@ Raspberry Pi uses the [systemd deployment](deploy/README.md).
 ## Topic titles from YouTube captions
 
 With `TOPICS_URL=http://127.0.0.1:11435`, the worker names uploaded videos as
-`Мэддисон — <short topic> | YYYY-MM-DD`. It waits at least 15 minutes for serving
+`<Short topic> | Мэддисон`. Original publication dates stay in the description.
+It waits at least 15 minutes for serving
 Russian captions, preferring YouTube's automatic ASR track. Captions are fetched
 through the official authenticated API, not a public transcript scraper.
 
@@ -130,6 +131,9 @@ transcript is cached in BoxDB over model retries, then discarded when its topic
 is saved. The topic is saved before changing YouTube, so a lost update response
 is reconciled against the existing title. Manually edited titles are preserved.
 Descriptions, privacy and video IDs are preserved during renaming.
+When the title format changes, previously applied titles are queued again using
+their saved topics. The previous title is retained until YouTube confirms the
+change, preserving retries and manual edits without another caption download.
 
 Stop the worker before manually processing existing videos:
 

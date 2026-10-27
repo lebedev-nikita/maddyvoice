@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt, checkedFetch, Settings } from "./core.ts";
 import type { Job } from "./database.ts";
 import { portraitAttribution } from "./media.ts";
-import { captionText } from "./topic.ts";
+import { captionText, topicTitle } from "./topic.ts";
 
 const Auth = Schema.Struct({
   clientId: Schema.String,
@@ -77,10 +77,15 @@ function resumeOffset(range: string | null, size: number): number {
   return offset;
 }
 
-export function videoMetadata(job: Job, privacy: "public" | "private" | "unlisted") {
+function legacyInitialTitle(job: Job) {
   const day = job.published_at.slice(0, 10);
   const caption = job.caption.replace(/[<>]/g, "").trim();
   const title = `Мэддисон — ${caption.split("\n")[0] || "голосовое сообщение"} | ${day}`;
+  return Array.from(title).slice(0, 100).join("");
+}
+
+export function videoMetadata(job: Job, privacy: "public" | "private" | "unlisted") {
+  const caption = job.caption.replace(/[<>]/g, "").trim();
   const suffix = `\n\nТелеграм-канал Мэддисона: https://t.me/${job.channel}\nОригинальное сообщение: ${job.source_url}\nДата и время публикации оригинального сообщения: ${job.published_at.replace("T", " ").replace(".000Z", " UTC")}\nНеофициальный архив голосовых сообщений.\n\n${portraitAttribution}\n\n${sourceMarker(job)}`;
   let description = "";
   const budget = 5000 - Buffer.byteLength(suffix, "utf8");
@@ -91,7 +96,7 @@ export function videoMetadata(job: Job, privacy: "public" | "private" | "unliste
   description += suffix;
   return {
     snippet: {
-      title: Array.from(title).slice(0, 100).join(""),
+      title: topicTitle(caption.split("\n")[0] || "Голосовое сообщение"),
       description,
       categoryId: "22",
       defaultLanguage: "ru",
@@ -343,11 +348,22 @@ export class YouTubeClient {
     return captionText(await download.text());
   }
 
-  async updateTitle(job: Job, title: string, signal?: AbortSignal): Promise<"applied" | "manual"> {
+  async updateTitle(
+    job: Job,
+    title: string,
+    previousTitle?: string | null,
+    signal?: AbortSignal,
+  ): Promise<"applied" | "manual"> {
     if (!job.youtube_id) throw new Error("Video has not been uploaded");
     const current = await this.ownedSnippet(job, job.youtube_id, signal);
+    if (!current.title) throw new Error("YouTube video has no title");
     if (current.title === title) return "applied";
-    if (current.title !== videoMetadata(job, "private").snippet.title) return "manual";
+    const managedTitles = [
+      videoMetadata(job, "private").snippet.title,
+      legacyInitialTitle(job),
+      previousTitle,
+    ];
+    if (!managedTitles.includes(current.title)) return "manual";
     if (!current.categoryId) throw new Error("YouTube video has no category");
     const { channelId: _channelId, ...snippet } = current;
     const updated = await this.request(

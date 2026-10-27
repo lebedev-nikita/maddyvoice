@@ -75,7 +75,7 @@ it("caches captions over model failures, discards text after a topic, and never 
       return "Большой рассказ про новую компьютерную игру.";
     }
     override async updateTitle(_job: Job, title: string): Promise<"applied"> {
-      expect(title).toBe("Мэддисон — Впечатления от новой компьютерной игры | 2026-10-26");
+      expect(title).toBe("Впечатления от новой компьютерной игры | Мэддисон");
       return "applied";
     }
   }
@@ -130,6 +130,70 @@ it("persists caption backoff and a daily quota cap even when --now is used", asy
       yield* drainTitles(20, true);
       expect(reads).toBe(12);
       expect((yield* listJobs()).every((job) => job.status === "uploaded")).toBe(true);
+    }).pipe(Effect.provide(layer)),
+  );
+});
+
+it("requeues old title formats from saved topics and retains the previous title over retries", async () => {
+  const oldTitle = "Мэддисон — Впечатления от новой компьютерной игры | 2026-10-26";
+  const title = "Впечатления от новой компьютерной игры | Мэддисон";
+  let updates = 0;
+  class Client extends YouTubeClient {
+    override async verifyChannel() {}
+    override async captions(): Promise<string | undefined> {
+      throw new Error("A format change must not download captions");
+    }
+    override async updateTitle(
+      _job: Job,
+      next: string,
+      previous?: string | null,
+    ): Promise<"applied"> {
+      expect(previous).toBe(oldTitle);
+      expect(next).toBe(title);
+      if (++updates === 1) throw new Error("Response lost after title update");
+      return "applied";
+    }
+  }
+  const layer = await fixture(new Client(auth), () =>
+    Effect.die("A saved topic must not be regenerated"),
+  );
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* savePosts([], "live", 900);
+      yield* uploaded(1);
+      const jobs = yield* listJobs();
+      yield* runSql(
+        "Seed a legacy title",
+        `INSERT INTO video_titles
+      (job_id,video_id,status,topic,title,created_at,updated_at) VALUES (?,?,'applied',?,?,?,?)`,
+        [
+          "maddysontg-1-0",
+          "abcdefghijk",
+          "Впечатления от новой компьютерной игры",
+          oldTitle,
+          "2026-10-26T10:20:30.000Z",
+          "2026-10-26T10:20:30.000Z",
+        ],
+      );
+      yield* drainTitles(1);
+      expect((yield* listTitles())[0]).toMatchObject({
+        status: "pending",
+        title: oldTitle,
+        attempts: 1n,
+      });
+      yield* drainTitles(1);
+      expect(updates).toBe(1);
+      yield* drainTitles(1, true);
+      expect((yield* listTitles())[0]).toMatchObject({
+        status: "applied",
+        title,
+        transcript: null,
+        error: null,
+      });
+      yield* drainTitles(1, true);
+      expect(updates).toBe(2);
+      expect(yield* listJobs()).toEqual(jobs);
+      expect(yield* getCursor()).toBe(900);
     }).pipe(Effect.provide(layer)),
   );
 });

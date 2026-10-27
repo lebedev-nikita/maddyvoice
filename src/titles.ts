@@ -41,6 +41,15 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
       AND channel=? ON CONFLICT DO NOTHING`,
     [iso, iso, DateTime.toEpochMillis(now) + 15 * 60_000, channel],
   );
+  for (const item of yield* listTitles()) {
+    if (item.status !== "applied" || !item.topic || item.title === topicTitle(item.topic)) continue;
+    // Retain the previous title for remote reconciliation, including after a lost response.
+    yield* runSql(
+      "Queue title format update",
+      "UPDATE video_titles SET status='pending', next_attempt=0, error=NULL, updated_at=? WHERE job_id=? AND status='applied'",
+      [iso, item.job_id],
+    );
+  }
 });
 
 const reserveCaptionCheck = Effect.fn("reserveCaptionCheck")(function* (day: string) {
@@ -119,7 +128,7 @@ const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: J
   if (!topic && !text) return;
   if (!topic) {
     topic = yield* topics.summarize(text ?? "");
-    const title = topicTitle(topic, job.published_at);
+    const title = topicTitle(topic);
     // Keep the topic before a remote mutation. A lost update response is reconciled by reading the title.
     yield* runSql(
       "Save topic and discard transcript",
@@ -128,9 +137,9 @@ const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: J
       [topic, title, iso, job.id],
     );
   }
-  const title = topicTitle(topic, job.published_at);
+  const title = topicTitle(topic);
   const outcome = yield* attempt("Apply topic to YouTube title", (signal) =>
-    client.updateTitle(job, title, signal),
+    client.updateTitle(job, title, item.title, signal),
   );
   yield* runSql(
     "Save title result",

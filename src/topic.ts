@@ -2,15 +2,17 @@ import { load } from "cheerio";
 import { Config, Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
 
-export function topicTitle(topic: string, publishedAt: string) {
-  const prefix = "Мэддисон — ";
-  const suffix = ` | ${publishedAt.slice(0, 10)}`;
-  const text = topic
-    .replace(/[<>\r\n]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const budget = 100 - Array.from(prefix + suffix).length;
-  return prefix + Array.from(text).slice(0, budget).join("").trim() + suffix;
+export function topicTitle(topic: string) {
+  const suffix = " | Мэддисон";
+  const clean =
+    topic
+      .replace(/[<>\r\n]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "Голосовое сообщение";
+  const [first, ...rest] = Array.from(clean);
+  const text = (first ?? "").toLocaleUpperCase("ru-RU") + rest.join("");
+  const budget = 100 - Array.from(suffix).length;
+  return Array.from(text).slice(0, budget).join("").trim() + suffix;
 }
 
 export function captionText(srt: string) {

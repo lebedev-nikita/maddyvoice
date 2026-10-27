@@ -148,9 +148,53 @@ describe("captions and title updates", () => {
       ),
     ).toBe("Привет всем ребята про игру & кино");
     expect(() => captionText("not a caption file")).toThrow("no usable speech");
-    const title = topicTitle("Очень длинная тема ".repeat(100), job.published_at);
+    const title = topicTitle("Очень длинная тема ".repeat(100));
     expect(Array.from(title).length).toBeLessThanOrEqual(100);
-    expect(title.endsWith(" | 2026-10-26")).toBe(true);
+    expect(title.endsWith(" | Мэддисон")).toBe(true);
+  });
+
+  it("uses topic-first titles for new uploads, including before captions are ready", () => {
+    expect(videoMetadata(job, "public").snippet.title).toBe("Голосовое сообщение | Мэддисон");
+    expect(
+      videoMetadata({ ...job, caption: "новая игра\nДругой текст" }, "public").snippet.title,
+    ).toBe("Новая игра | Мэддисон");
+    expect(topicTitle("  новая тема\nпро игру  ")).toBe("Новая тема про игру | Мэддисон");
+    expect(topicTitle("😀".repeat(100)).endsWith(" | Мэддисон")).toBe(true);
+    expect(Array.from(topicTitle("😀".repeat(100))).length).toBe(100);
+  });
+
+  it("reformats an in-progress legacy upload after its original metadata was committed", async () => {
+    const current = { ...snippet, title: "Мэддисон — голосовое сообщение | 2026-10-26" };
+    const title = "Рассказ про новую игру | Мэддисон";
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (init?.method !== "PUT")
+        return Response.json({ items: [{ id: "abcdefghijk", snippet: current }] });
+      expect(JSON.parse(init.body as string).snippet.title).toBe(title);
+      return Response.json({ id: "abcdefghijk" });
+    });
+    expect(await client.updateTitle(uploaded, title)).toBe("applied");
+  });
+
+  it("reformats a saved topic title and reconciles a lost response while preserving other manual edits", async () => {
+    const previous = "Мэддисон — Рассказ про новую игру | 2026-10-26";
+    const title = "Рассказ про новую игру | Мэддисон";
+    let current = { ...snippet, title: previous };
+    let writes = 0;
+    const client = new YouTubeClient(auth, async (url, init) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (init?.method !== "PUT")
+        return Response.json({ items: [{ id: "abcdefghijk", snippet: current }] });
+      writes++;
+      current = { ...snippet, title: JSON.parse(init.body as string).snippet.title };
+      throw new Error("Response lost");
+    });
+    await expect(client.updateTitle(uploaded, title, previous)).rejects.toThrow("Response lost");
+    expect(await client.updateTitle(uploaded, title, previous)).toBe("applied");
+    expect(writes).toBe(1);
+    current = { ...snippet, title: "Название, изменённое владельцем" };
+    expect(await client.updateTitle(uploaded, title, previous)).toBe("manual");
+    expect(writes).toBe(1);
   });
 });
 async function videoFile() {
