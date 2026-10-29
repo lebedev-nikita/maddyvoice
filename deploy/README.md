@@ -269,3 +269,7 @@ It retries transient failures every 30 minutes, preserves confirmed updates in
 retries for a batch requiring review. This service has a separate batch lock and
 can run alongside the publisher: it changes only thumbnails of the exact video
 IDs in the manifest, after verifying channel ownership and recording markers.
+After correcting a failure that stopped retries, resume the same instance with
+`sudo systemctl restart maddyvoice-thumbnails@<name>.service`; keep its manifest,
+images and progress file unchanged. Temporary DNS and connection failures retry
+automatically with exit status 75.

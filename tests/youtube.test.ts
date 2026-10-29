@@ -539,4 +539,25 @@ describe("custom thumbnails", () => {
     });
     await expect(client.setThumbnail(uploaded, png)).rejects.toThrow("quotaExceeded");
   });
+  it("preserves YouTube's explanation when custom thumbnail permissions are missing", async () => {
+    const message =
+      "The authenticated user doesn't have permissions to upload and set custom video thumbnails.";
+    const client = new YouTubeClient(auth, async (url) => {
+      if (url.includes("oauth2")) return Response.json({ access_token: "access" });
+      if (url.includes("/thumbnails/set"))
+        return Response.json(
+          { error: { message, errors: [{ reason: "forbidden" }] } },
+          { status: 403 },
+        );
+      return Response.json({
+        items: [
+          {
+            id: "abcdefghijk",
+            snippet: { channelId: auth.channelId, description: `maddyvoice:${job.id}` },
+          },
+        ],
+      });
+    });
+    await expect(client.setThumbnail(uploaded, png)).rejects.toThrow(`forbidden: ${message}`);
+  });
 });

@@ -1,12 +1,16 @@
-import { Config, Effect } from "effect";
+import { Config, Context, Effect, Layer, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { AppError, attempt, Paths } from "./core.ts";
 
+export function thumbnailText(quote: string) {
+  return quote.trim().replace(/[.,:;!?…—–\s-]+$/u, (ending) => (ending.includes("?") ? "?" : ""));
+}
+
 export function thumbnailLines(quote: string) {
-  const words = quote.toLocaleUpperCase("ru-RU").trim().split(/\s+/);
+  const words = thumbnailText(quote).toLocaleUpperCase("ru-RU").split(/\s+/);
   const lines: string[] = [];
   for (const word of words) {
     const previous = lines.at(-1);
@@ -23,8 +27,9 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
 ) {
   const binary = yield* Config.String("FFMPEG_PATH").pipe(Config.withDefault("ffmpeg"));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const lines = thumbnailLines(quote);
-  if (!quote.trim() || lines.length > 4)
+  const displayQuote = thumbnailText(quote);
+  const lines = thumbnailLines(displayQuote);
+  if (!displayQuote || lines.length > 4)
     return yield* new AppError({ message: "Thumbnail requires a short nonempty quote" });
   const work = yield* Effect.acquireRelease(
     attempt("Create thumbnail workspace", () => mkdtemp(join(tmpdir(), "maddyvoice-thumbnail-"))),
@@ -54,8 +59,8 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
     `[mask]format=rgba,geq=r=17:g=20:b=16:a='255*clip((832-X)/400,0,1)'[shade];` +
     `[photo][shade]overlay,${text.join(",")},` +
     `drawtext=fontfile=font.ttf:textfile=brand.txt:expansion=none:fontcolor=0xfaf9f1@0.6:fontsize=22:x=68:y=660`;
-  yield* spawner
-    .string(
+  const process = yield* spawner
+    .spawn(
       ChildProcess.make(
         binary,
         [
@@ -86,6 +91,14 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
           }),
       ),
     );
+  const [output, code] = yield* Effect.all(
+    [process.all.pipe(Stream.decodeText(), Stream.mkString), process.exitCode],
+    { concurrency: "unbounded" },
+  ).pipe(Effect.mapError(() => new AppError({ message: "Cannot read thumbnail FFmpeg output" })));
+  if (Number(code) !== 0)
+    return yield* new AppError({
+      message: `Thumbnail FFmpeg exited ${code}; requires drawtext and geq: ${output.slice(-1000)}`,
+    });
   yield* attempt("Save thumbnail", async () => {
     await mkdir(dirname(destination), { recursive: true });
     // The staging file is placed beside the destination for an atomic rename across filesystems.
@@ -99,3 +112,22 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
   });
   return destination;
 }, Effect.scoped);
+
+export class Thumbnails extends Context.Service<
+  Thumbnails,
+  { render(quote: string, destination: string): Effect.Effect<string, AppError> }
+>()("maddyvoice/Thumbnails") {
+  static readonly layer = Layer.effect(
+    Thumbnails,
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return Thumbnails.of({
+        render: (quote, destination) =>
+          renderThumbnail(quote, destination).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError((error) => new AppError({ message: error.message })),
+          ),
+      });
+    }),
+  );
+}

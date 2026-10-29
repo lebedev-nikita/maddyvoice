@@ -8,6 +8,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { Settings } from "../src/core.ts";
 import { Media } from "../src/media.ts";
+import { Thumbnails } from "../src/thumbnail.ts";
 
 const exec = promisify(execFile);
 const directory = await mkdtemp(join(tmpdir(), "maddyvoice-media-smoke-"));
@@ -139,8 +140,20 @@ try {
   assert(probe.streams.some((stream) => stream.codec_name === "aac"));
   assert(probe.streams.every((stream) => Math.abs(Number(stream.duration) - 2) < 0.1));
   assert(Math.abs(Number(probe.format.duration) - 2) < 0.1);
+  const thumbnail = await Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* (yield* Thumbnails).render(
+        "Большой рассказ",
+        join(directory, "thumbnails", "quote.png"),
+      );
+    }).pipe(Effect.provide(Thumbnails.layer), Effect.provide(BunServices.layer)),
+  );
+  const image = await readFile(thumbnail);
+  assert(image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])));
+  assert.equal(image.readUInt32BE(16), 1280);
+  assert.equal(image.readUInt32BE(20), 720);
   console.log(
-    "Media smoke passed: two images change in order, H.264 1080p + AAC, full audio duration",
+    "Media smoke passed: ordered slides, H.264 1080p + AAC, full duration, 1280x720 quote thumbnail",
   );
 } finally {
   globalThis.fetch = originalFetch;

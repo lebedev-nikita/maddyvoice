@@ -2,7 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { open, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { Context, Effect, Layer, Schema } from "effect";
-import { AppError, attempt, checkedFetch, Settings } from "./core.ts";
+import { AppError, attempt, checkedFetch, safeMessage, Settings } from "./core.ts";
 import type { Job } from "./database.ts";
 import { captionText, topicTitle } from "./topic.ts";
 import { defaultVideoTags, mergeVideoTags } from "./video-tags.ts";
@@ -142,9 +142,10 @@ export function videoMetadata(job: Job, privacy: "public" | "private" | "unliste
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
-async function youtubeErrorReason(response: Response) {
+async function youtubeErrorReason(response: Response, includeMessage = false) {
   const Problem = Schema.Struct({
     error: Schema.Struct({
+      message: Schema.optionalKey(Schema.String),
       errors: Schema.Array(
         Schema.Struct({
           reason: Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)),
@@ -154,7 +155,10 @@ async function youtubeErrorReason(response: Response) {
   });
   try {
     const problem = Schema.decodeUnknownSync(Problem)(await response.json());
-    return problem.error.errors.map((error) => error.reason).join(", ");
+    const reasons = problem.error.errors.map((error) => error.reason).join(", ");
+    return includeMessage && problem.error.message
+      ? `${reasons}: ${safeMessage(new Error(problem.error.message))}`
+      : reasons;
   } catch {
     return "unknown";
   }
@@ -527,7 +531,7 @@ export class YouTubeClient {
     );
     if (!response.ok)
       throw new Error(
-        `Set YouTube thumbnail HTTP ${response.status} (${await youtubeErrorReason(response)})`,
+        `Set YouTube thumbnail HTTP ${response.status} (${await youtubeErrorReason(response, true)})`,
       );
     const result = Schema.decodeUnknownSync(
       Schema.Struct({
