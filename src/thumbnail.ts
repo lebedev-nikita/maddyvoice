@@ -5,8 +5,12 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { AppError, attempt, Paths } from "./core.ts";
 
+export function thumbnailText(quote: string) {
+  return quote.trim().replace(/[.,:;!?…—–\s-]+$/u, (ending) => (ending.includes("?") ? "?" : ""));
+}
+
 export function thumbnailLines(quote: string) {
-  const words = quote.toLocaleUpperCase("ru-RU").trim().split(/\s+/);
+  const words = thumbnailText(quote).toLocaleUpperCase("ru-RU").split(/\s+/);
   const lines: string[] = [];
   for (const word of words) {
     const previous = lines.at(-1);
@@ -23,8 +27,9 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
 ) {
   const binary = yield* Config.String("FFMPEG_PATH").pipe(Config.withDefault("ffmpeg"));
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const lines = thumbnailLines(quote);
-  if (!quote.trim() || lines.length > 4)
+  const displayQuote = thumbnailText(quote);
+  const lines = thumbnailLines(displayQuote);
+  if (!displayQuote || lines.length > 4)
     return yield* new AppError({ message: "Thumbnail requires a short nonempty quote" });
   const work = yield* Effect.acquireRelease(
     attempt("Create thumbnail workspace", () => mkdtemp(join(tmpdir(), "maddyvoice-thumbnail-"))),

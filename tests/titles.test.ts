@@ -506,39 +506,45 @@ it("preserves thumbnails of manually managed titles", async () => {
   );
 });
 
-it("backfills a saved quote on an applied title without downloading captions or regenerating metadata", async () => {
-  let images = 0;
-  class Client extends MetadataClient {
-    override async verifyChannel() {}
-    override async captions(): Promise<never> {
-      throw new Error("Saved quotes must not require captions");
+it.each([null, "Большой рассказ."])(
+  "backfills or reformats a saved quote without regenerating metadata: %s",
+  async (previous) => {
+    let images = 0;
+    class Client extends MetadataClient {
+      override async verifyChannel() {}
+      override async captions(): Promise<never> {
+        throw new Error("Saved quotes must not require captions");
+      }
+      override async updateTitle(): Promise<"applied"> {
+        return "applied";
+      }
+      override async setThumbnail(job: Pick<Job, "id" | "youtube_id">, png: Uint8Array) {
+        images++;
+        return super.setThumbnail(job, png);
+      }
     }
-    override async updateTitle(): Promise<"applied"> {
-      return "applied";
-    }
-    override async setThumbnail(job: Pick<Job, "id" | "youtube_id">, png: Uint8Array) {
-      images++;
-      return super.setThumbnail(job, png);
-    }
-  }
-  const layer = await fixture(new Client(auth), () => Effect.die("Must reuse saved metadata"));
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* uploaded(1);
-      yield* drainTitles(0);
-      yield* runSql(
-        "Seed completed metadata with a missing thumbnail",
-        `UPDATE video_titles SET status='applied',topic='выбирает новую игру',
-          title='Мэддисон выбирает новую игру',thumbnail_quote='Большой рассказ',generation_version=1`,
-      );
-      yield* drainTitles(1);
-      expect(images).toBe(1);
-      expect((yield* listTitles())[0]).toMatchObject({
-        status: "applied",
-        thumbnail_applied_quote: "Большой рассказ",
-      });
-      yield* drainTitles(1);
-      expect(images).toBe(1);
-    }).pipe(Effect.provide(layer)),
-  );
-});
+    const layer = await fixture(new Client(auth), () => Effect.die("Must reuse saved metadata"));
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* uploaded(1);
+        yield* drainTitles(0);
+        yield* runSql(
+          "Seed completed metadata with a missing thumbnail",
+          `UPDATE video_titles SET status='applied',topic='выбирает новую игру',
+          title='Мэддисон выбирает новую игру',thumbnail_quote='Большой рассказ.',
+          thumbnail_applied_quote=?,generation_version=1`,
+          [previous],
+        );
+        yield* drainTitles(1);
+        expect(images).toBe(1);
+        expect((yield* listTitles())[0]).toMatchObject({
+          status: "applied",
+          thumbnail_quote: "Большой рассказ.",
+          thumbnail_applied_quote: "Большой рассказ",
+        });
+        yield* drainTitles(1);
+        expect(images).toBe(1);
+      }).pipe(Effect.provide(layer)),
+    );
+  },
+);

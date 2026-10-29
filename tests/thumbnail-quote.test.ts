@@ -8,7 +8,7 @@ import {
   validateThumbnailQuote,
   validateThumbnailReview,
 } from "../src/thumbnail-quote.ts";
-import { thumbnailLines } from "../src/thumbnail.ts";
+import { thumbnailLines, thumbnailText } from "../src/thumbnail.ts";
 
 const transcript = "Вы просто супер. Я просто в шоке, на самом деле. Спасибо вам большое.";
 
@@ -108,6 +108,27 @@ it("fails closed on repeated invalid drafts and propagates model failures withou
 });
 
 it("wraps text without dropping words or evaluating FFmpeg expansions", () => {
-  expect(thumbnailLines("Вы просто супер.").join(" ")).toBe("ВЫ ПРОСТО СУПЕР.");
-  expect(thumbnailLines("Это 100%: %{n}!").join(" ")).toBe("ЭТО 100%: %{N}!");
+  expect(thumbnailLines("Вы просто супер.").join(" ")).toBe("ВЫ ПРОСТО СУПЕР");
+  expect(thumbnailLines("Это 100%: %{n}!").join(" ")).toBe("ЭТО 100%: %{N}");
+});
+
+it.each([
+  ["Вы просто супер.", "Вы просто супер"],
+  ["Спасибо вам!", "Спасибо вам"],
+  ["Я просто в шоке,", "Я просто в шоке"],
+  ["Я решил…", "Я решил"],
+  ["Вот так...", "Вот так"],
+  ["Ну и что?!", "Ну и что?"],
+  ["Это вопрос?", "Это вопрос?"],
+  ["Это вопрос???", "Это вопрос?"],
+  ["Что, правда?  ", "Что, правда?"],
+  ["Как-то так;", "Как-то так"],
+  ["Выбор:", "Выбор"],
+  ["Ну —", "Ну"],
+  ["Это 100%", "Это 100%"],
+  ["%{n}!", "%{n}"],
+  ["Без пунктуации", "Без пунктуации"],
+])("formats the thumbnail ending while preserving the excerpt: %s", (quote, expected) => {
+  expect(thumbnailText(quote)).toBe(expected);
+  expect(thumbnailLines(quote).join(" ")).toBe(expected.toLocaleUpperCase("ru-RU"));
 });

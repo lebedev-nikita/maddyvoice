@@ -6,7 +6,7 @@ import { listJobs, runSql, Store, type Job } from "./database.ts";
 import { commentsReadyAt, titleGenerationVersion, Topics, topicTitle } from "./topic.ts";
 import { YouTube } from "./youtube.ts";
 import { VideoTags } from "./video-tags.ts";
-import { Thumbnails } from "./thumbnail.ts";
+import { thumbnailText, Thumbnails } from "./thumbnail.ts";
 
 const TitleJob = Schema.Struct({
   job_id: Schema.String,
@@ -54,7 +54,8 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
     if (
       item.generation_version === BigInt(titleGenerationVersion) &&
       item.title === topicTitle(item.topic) &&
-      (!item.thumbnail_quote || item.thumbnail_applied_quote === item.thumbnail_quote)
+      (!item.thumbnail_quote ||
+        item.thumbnail_applied_quote === thumbnailText(item.thumbnail_quote))
     )
       continue;
     // Retain the previous title for remote reconciliation, including after a lost response.
@@ -196,10 +197,12 @@ const applyThumbnail = Effect.fn("applyThumbnail")(function* (
   job: Job,
   quote: string | null,
 ) {
-  if (!quote || item.thumbnail_applied_quote === quote) return;
+  if (!quote) return;
+  const text = thumbnailText(quote);
+  if (item.thumbnail_applied_quote === text) return;
   const thumbnails = yield* Thumbnails;
   const { dataDir } = yield* Settings;
-  const path = yield* thumbnails.render(quote, join(dataDir, "thumbnails", `${job.id}.png`));
+  const path = yield* thumbnails.render(text, join(dataDir, "thumbnails", `${job.id}.png`));
   const png = yield* attempt("Read rendered thumbnail", () => readFile(path));
   const client = yield* (yield* YouTube).load();
   yield* attempt("Apply generated YouTube thumbnail", (signal) =>
@@ -208,7 +211,7 @@ const applyThumbnail = Effect.fn("applyThumbnail")(function* (
   yield* runSql(
     "Save thumbnail confirmation",
     "UPDATE video_titles SET thumbnail_applied_quote=?, updated_at=? WHERE job_id=?",
-    [quote, DateTime.formatIso(yield* DateTime.now), job.id],
+    [text, DateTime.formatIso(yield* DateTime.now), job.id],
   );
   yield* Effect.logInfo(`Updated thumbnail for ${job.id}`);
 });

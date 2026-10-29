@@ -297,6 +297,8 @@ are preserved; `titles --regenerate` requests new metadata explicitly.
 
 For automatically managed titles, the metadata worker renders and uploads the
 approved quote as a 1280×720 thumbnail before marking the work complete. Images
+omit trailing sentence punctuation, preserving a question mark for questions;
+the original quote stays unchanged for transcript verification. Images
 remain under `DATA_DIR/thumbnails/`. Failed renders or uploads use the persisted
 metadata retry queue without regenerating the quote or blocking video uploads.
 Confirmed quotes are checkpointed in BoxDB and shown by `cli status`; title-only
