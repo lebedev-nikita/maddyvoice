@@ -6,8 +6,9 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { AppError, attempt, Paths, Settings } from "./core.ts";
+import { AppError, attempt, Paths, safeMessage, Settings } from "./core.ts";
 import type { Post } from "./telegram.ts";
+import { Waveform, WaveformAnalyzer, waveformFrames } from "./waveform.ts";
 
 function allowedMedia(url: string): boolean {
   const parsed = new URL(url);
@@ -98,6 +99,7 @@ export class Media extends Context.Service<
       const execute = Effect.fn("Media.execute")(function* (
         binary: string,
         args: readonly string[],
+        io?: { input?: Stream.Stream<Uint8Array>; consume?: (chunk: Uint8Array) => void },
       ) {
         const handle = yield* spawner
           .spawn(ChildProcess.make(binary, [...args]))
@@ -108,12 +110,27 @@ export class Media extends Context.Service<
           );
         const [stdout, stderr, code] = yield* Effect.all(
           [
-            handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            io?.consume
+              ? handle.stdout.pipe(
+                  Stream.runForEach((chunk) =>
+                    Effect.try({
+                      try: () => io.consume!(chunk),
+                      catch: (cause) => new AppError({ message: safeMessage(cause) }),
+                    }),
+                  ),
+                  Effect.as(""),
+                )
+              : handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
             handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
             handle.exitCode,
+            io?.input ? Stream.run(io.input, handle.stdin) : Effect.void,
           ],
           { concurrency: "unbounded" },
-        ).pipe(Effect.mapError(() => new AppError({ message: `${binary} process failed` })));
+        ).pipe(
+          Effect.mapError(
+            (cause) => new AppError({ message: `${binary} process failed: ${safeMessage(cause)}` }),
+          ),
+        );
         if (Number(code) !== 0) {
           return yield* new AppError({
             message: `${binary} exited ${code}: ${stderr.slice(-2000)}`,
@@ -159,6 +176,31 @@ export class Media extends Context.Service<
           return duration;
         });
         const pictures = post.images.length > 0 ? post.images : [Paths.portrait];
+        const analyzer = new WaveformAnalyzer();
+        yield* execute(
+          config.ffmpeg,
+          [
+            "-nostdin",
+            "-v",
+            "error",
+            "-threads",
+            "2",
+            "-i",
+            audioPath,
+            "-t",
+            String(duration),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            String(Waveform.sampleRate),
+            "-f",
+            "f32le",
+            "pipe:1",
+          ],
+          { consume: (chunk) => analyzer.write(chunk) },
+        );
+        const envelope = yield* attempt("Analyze voice waveform", async () => analyzer.finish());
         for (const [index, picture] of pictures.entries()) {
           let input = picture;
           if (post.images.length > 0) {
@@ -172,12 +214,23 @@ export class Media extends Context.Service<
             "-v",
             "error",
             "-y",
+            "-filter_complex_threads",
+            "1",
             "-i",
             input,
-            "-vf",
-            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x101014,setsar=1",
+            "-i",
+            Paths.videoOverlay,
+            "-filter_complex",
+            "[0:v]scale=1920:1080:force_original_aspect_ratio=increase," +
+              `crop=1920:1080:(iw-ow)/2:(ih-oh)*${post.images.length ? "0.5" : "0.8"},` +
+              "setsar=1,eq=saturation=0.94,format=rgba[photo];" +
+              "[photo][1:v]overlay=0:840:format=auto,format=rgb24[frame]",
+            "-map",
+            "[frame]",
             "-frames:v",
             "1",
+            "-threads",
+            "2",
             join(work, `frame-${index}.png`),
           ]);
         }
@@ -190,49 +243,73 @@ export class Media extends Context.Service<
           writeFile(join(work, "slides.ffconcat"), `ffconcat version 1.0\n${slides.join("\n")}\n`),
         );
         const temporary = join(work, "video.mp4");
-        yield* execute(config.ffmpeg, [
-          "-nostdin",
-          "-v",
-          "error",
-          "-y",
-          "-f",
-          "concat",
-          "-safe",
-          "1",
-          "-i",
-          join(work, "slides.ffconcat"),
-          "-i",
-          audioPath,
-          "-map",
-          "0:v:0",
-          "-map",
-          "1:a:0",
-          "-vf",
-          `fps=30,tpad=stop_mode=clone:stop_duration=${duration}`,
-          "-t",
-          String(duration),
-          "-r",
-          "30",
-          "-c:v",
-          "libx264",
-          "-preset",
-          "fast",
-          "-tune",
-          "stillimage",
-          "-crf",
-          "20",
-          "-pix_fmt",
-          "yuv420p",
-          "-c:a",
-          "aac",
-          "-b:a",
-          "192k",
-          "-ar",
-          "48000",
-          "-movflags",
-          "+faststart",
-          temporary,
-        ]);
+        yield* execute(
+          config.ffmpeg,
+          [
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-filter_complex_threads",
+            "1",
+            "-f",
+            "concat",
+            "-safe",
+            "1",
+            "-i",
+            join(work, "slides.ffconcat"),
+            "-i",
+            audioPath,
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "rgba",
+            "-video_size",
+            `${Waveform.width}x${Waveform.height}`,
+            "-framerate",
+            String(Waveform.fps),
+            "-i",
+            "pipe:0",
+            "-map",
+            "[video]",
+            "-map",
+            "1:a:0",
+            "-filter_complex",
+            `[0:v]fps=${Waveform.fps},tpad=stop_mode=clone:stop_duration=${duration},format=rgba[slides];` +
+              `[slides][2:v]overlay=${Waveform.left}:${Waveform.top}:shortest=1:format=auto,` +
+              "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[video]",
+            "-t",
+            String(duration),
+            "-r",
+            String(Waveform.fps),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-threads",
+            "2",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-ar",
+            "48000",
+            "-movflags",
+            "+faststart",
+            temporary,
+          ],
+          { input: Stream.fromIterable(waveformFrames(envelope, duration), { chunkSize: 1 }) },
+        );
         const path = join(root, `${key}.mp4`);
         yield* attempt("Save rendered video", () => rename(temporary, path));
         const info = yield* attempt("Fingerprint video", () => fingerprint(path));

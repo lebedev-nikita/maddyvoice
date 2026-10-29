@@ -6,9 +6,13 @@ to a dedicated YouTube channel. Runs locally with Bun, Effect, BoxDB and FFmpeg.
 The first scan records the current end of the feed. Subsequent scans queue only
 new recordings. Historical imports are explicit and do not move that boundary.
 Forwarded messages, music uploads and videos are excluded. Each voice message
-becomes a 1080p H.264/AAC MP4 using its attached photos as a slideshow, or the
-bundled Maddyson portrait. Every description includes separate channel and post
-links, plus the original publication date and time in UTC.
+becomes a 1080p60 H.264/AAC MP4 using its attached photos as a slideshow, or the
+bundled Maddyson portrait. Photos fill the frame with proportional cropping.
+`@MaddyvoiceArchive` appears at bottom left; stationary rounded bars at bottom
+right display three seconds of voice loudness, progressing from right to left.
+Every description includes separate channel and post links, plus the original
+publication date and time in UTC. The layout applies to newly rendered videos;
+existing uploads and resumable upload files are preserved.
 
 ## Install
 
@@ -16,7 +20,8 @@ Requires Bun 1.4.4+, FFmpeg/FFprobe and macOS ARM64 or Linux x64/ARM64 with
 glibc 2.35+. BoxDB's native client is bundled; no database server is needed.
 
 ```sh
-brew install bun ffmpeg just
+brew install bun ffmpeg-full just
+export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"
 bun install --frozen-lockfile
 cp .env.example .env
 bun run cli scan
@@ -369,6 +374,7 @@ just build
 
 Tests cover live catch-up, independent history imports, BoxDB deduplication,
 metadata limits, upload recovery and committing sessions before network writes.
-The FFmpeg smoke test verifies image order, both stream durations and codecs.
+The FFmpeg smoke test verifies full-frame image order, branding, moving audio
+history, both stream durations and codecs.
 It uses generated local fixtures and makes no external requests. CI runs the
 same checks. [Portrait attribution](assets/README.md).
