@@ -89,8 +89,10 @@ does not publish if that scan fails.
 Recordings publish in Telegram message-ID and audio-index order. An earlier
 recording in backoff, processing or review blocks every later one. Uploads start
 privately; the worker saves the video ID, waits for processing, then confirms the
-requested visibility before advancing. Publication retries inspect the same
-video. Test uploads keep private visibility after restarts.
+generated title, tags and custom thumbnail before opening the requested
+visibility. Metadata failures, caption waits and thumbnail limits keep the video
+private and block later recordings. Publication retries inspect the same video
+and reuse saved metadata. Test uploads keep private visibility after restarts.
 
 Import older history before publishing newer recordings: a new recording older
 than a completed or potentially visible release is rejected. This includes a
@@ -127,7 +129,8 @@ checks pushes and pull requests; it does not deploy to the Pi.
 
 ## Topic titles from YouTube captions
 
-With `TOPICS_URL=http://127.0.0.1:11435`, the worker names uploaded videos as
+Publication requires `TOPICS_URL=http://127.0.0.1:11435` and a running topic
+service. The worker names uploaded videos as
 `Мэддисон <action and topic>`, without a trailing signature. Original publication
 dates stay in the description.
 Titles use a short direct action or `Мэддисон о <topic>`, without introductory
@@ -230,7 +233,8 @@ names can be used without adding a registry entry. A review is
 needed only for new identities or aliases, not for each video. The service never
 rewrites confirmed entries from its own guesses.
 
-Title processing runs independently of live polling and uploads. Missing captions
+Metadata updates for already published videos run separately from the publication
+queue and continue while a new private video waits for its metadata. Missing captions
 and temporary model failures use persisted retry delays. At most twelve caption
 checks per UTC day reserve a conservative 3000-unit caption budget across restarts;
 large historical imports therefore receive titles over several days. A downloaded
@@ -279,7 +283,8 @@ No expected answer is sent to either model stage. This is an experimental
 command, separate from the production title worker.
 
 YouTube does not guarantee automatic captions. Until a usable Russian track is
-available, the video retains its initial caption/date title and the app retries.
+available, new videos remain private and the app retries. Already published
+videos retain their current title while waiting for a metadata update.
 
 New metadata generations also select search tags from the full captions, including
 all clearly named people, brands, platforms, works and places. Tags use one word,
@@ -300,14 +305,18 @@ and word limits are enforced before approval. The topic and approved quote are
 saved together before the full transcript is discarded. Existing applied titles
 are preserved; `titles --regenerate` requests new metadata explicitly.
 
-For automatically managed titles, the metadata worker renders and uploads the
-approved quote as a 1280×720 thumbnail before marking the work complete. Images
+The worker renders and uploads the approved quote as a 1280×720 thumbnail before
+publishing a new video. Already published videos receive the same updates through
+the separate metadata worker. Images
 omit trailing sentence punctuation, preserving a question mark for questions;
 the original quote stays unchanged for transcript verification. Images
 remain under `DATA_DIR/thumbnails/`. Failed renders or uploads use the persisted
-metadata retry queue without regenerating the quote or blocking video uploads.
+metadata retry queue without regenerating the quote. A failed thumbnail on a new
+video blocks its publication; updates to already published videos continue separately.
 Confirmed quotes are checkpointed in BoxDB and shown by `cli status`; title-only
-format updates retain the confirmed thumbnail. Manually managed titles are skipped.
+format updates retain the confirmed thumbnail. Already published videos with manually
+managed titles are skipped; a manually edited title on a staged video requires review
+before publication.
 Completed metadata with a saved quote is queued for its missing thumbnail without
 downloading captions or generating metadata again. Videos without a saved quote
 can be updated with an explicit batch below.

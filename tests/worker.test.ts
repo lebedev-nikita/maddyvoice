@@ -9,6 +9,8 @@ import { dateRange, importHistory, poll, processJob, retryJob } from "../src/wor
 import { Telegram, type Page, type Post } from "../src/telegram.ts";
 import { Media, fingerprint } from "../src/media.ts";
 import { YouTube, YouTubeClient } from "../src/youtube.ts";
+import { Topics } from "../src/topic.ts";
+import { Thumbnails } from "../src/thumbnail.ts";
 import { writeFile } from "node:fs/promises";
 
 const temporary: string[] = [];
@@ -219,6 +221,14 @@ it("persists the session BEFORE video bytes and recovers a lost completion witho
       expect((yield* processJob(job).pipe(Effect.result))._tag).toBe("Failure");
       const interrupted = (yield* listJobs())[0]!;
       expect(interrupted.status).toBe("uploading");
+      yield* runSql(
+        "Seed already confirmed metadata for upload recovery",
+        `INSERT INTO video_titles (job_id,video_id,status,topic,title,thumbnail_quote,
+          thumbnail_applied_quote,generation_version,created_at,updated_at)
+          VALUES ('maddysontg-8-0','abcdefghijk','applied','выбирает новую игру',
+            'Мэддисон выбирает новую игру','Большой рассказ','Большой рассказ',1,?,?)`,
+        [interrupted.created_at, interrupted.updated_at],
+      );
       yield* processJob(interrupted);
       expect((yield* listJobs())[0]).toMatchObject({
         status: "uploaded",
@@ -231,6 +241,11 @@ it("persists the session BEFORE video bytes and recovers a lost completion witho
       Effect.provide(youtube),
       Effect.provide(media),
       Effect.provide(telegram),
+      Effect.provide(Topics.layer),
+      Effect.provideService(
+        Thumbnails,
+        Thumbnails.of({ render: () => Effect.die("Reuse confirmed thumbnail") }),
+      ),
     ),
   );
 });

@@ -145,7 +145,7 @@ const titles = Command.make(
     ),
 ).pipe(
   Command.withDescription(
-    "Name uploaded videos using captions and Telegram comments; --now respects the one-hour wait and daily quota",
+    "Update published video metadata; --now respects the one-hour wait and daily quota",
   ),
 );
 

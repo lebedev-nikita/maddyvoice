@@ -218,12 +218,14 @@ manual `titles --now` batches. The reader selects the earliest 500 comments and
 passes only text bodies to nickname extraction. It verifies the original post
 timestamp before reading the thread. Telegram read failures and incomplete scans
 use the existing title retry queue; closed or empty threads use the registry
-generator. The publisher can keep polling and uploading while titles wait.
+generator. New videos remain private until their title and thumbnail are confirmed;
+metadata waits block later recordings. Updates to already published videos continue
+in the separate metadata worker.
 
 The health route checks service readiness; generating a real title also verifies
 Telegram access, Codex authentication and model access. If Codex login expires, log in again as
-`pi` with its installed Codex CLI. Model failures leave the title queued and do
-not stop Telegram polling or uploads. The transcript cache is removed after a
+`pi` with its installed Codex CLI. Model failures retain metadata for retry and
+keep staged videos private. The transcript cache is removed after a
 topic is saved; generated topics and application publication state stay in BoxDB.
 
 Stop the publisher before a manual title batch:
