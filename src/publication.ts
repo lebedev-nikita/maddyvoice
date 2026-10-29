@@ -2,6 +2,7 @@ import { DateTime, Effect } from "effect";
 import { AppError, attempt, safeMessage, Settings } from "./core.ts";
 import { listJobs, runSql, type Job } from "./database.ts";
 import { UploadReview, YouTube } from "./youtube.ts";
+import { preparePublicationMetadata } from "./titles.ts";
 
 const pause = (job: Job, message: string) =>
   runSql("Pause unsafe publication", "UPDATE jobs SET status='review', error=? WHERE id=?", [
@@ -45,6 +46,7 @@ export const completePublication = Effect.fn("completePublication")(function* (i
   const job = yield* assertPublicationHead(initial.id);
   const { privacy: configured } = yield* Settings;
   const privacy = job.publication_privacy ?? configured;
+  if (!(yield* preparePublicationMetadata(job))) return false;
   const client = yield* (yield* YouTube).load();
   const result = yield* Effect.tryPromise({
     try: (signal) => client.publish(job, privacy, signal),

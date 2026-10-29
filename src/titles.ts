@@ -1,7 +1,7 @@
 import { DateTime, Effect, Schema } from "effect";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { attempt, Settings } from "./core.ts";
+import { AppError, attempt, Settings } from "./core.ts";
 import { listJobs, runSql, Store, type Job } from "./database.ts";
 import { commentsReadyAt, titleGenerationVersion, Topics, topicTitle } from "./topic.ts";
 import { YouTube } from "./youtube.ts";
@@ -49,8 +49,11 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
       AND channel=? ON CONFLICT DO NOTHING`,
     [iso, iso, DateTime.toEpochMillis(now) + 15 * 60_000, channel],
   );
+  const uploaded = new Set(
+    (yield* listJobs()).filter((job) => job.status === "uploaded").map((job) => job.id),
+  );
   for (const item of yield* listTitles()) {
-    if (item.status !== "applied" || !item.topic) continue;
+    if (!uploaded.has(item.job_id) || item.status !== "applied" || !item.topic) continue;
     if (
       item.generation_version === BigInt(titleGenerationVersion) &&
       item.title === topicTitle(item.topic) &&
@@ -216,7 +219,11 @@ const applyThumbnail = Effect.fn("applyThumbnail")(function* (
   yield* Effect.logInfo(`Updated thumbnail for ${job.id}`);
 });
 
-const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: Job) {
+const processTitle = Effect.fn("processTitle")(function* (
+  item: TitleJob,
+  job: Job,
+  requireThumbnail = false,
+) {
   const client = yield* (yield* YouTube).load();
   const now = yield* DateTime.now;
   if (item.video_id !== job.youtube_id) {
@@ -230,6 +237,8 @@ const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: J
   if (yield* waitForComments(item, job, now)) return;
   const metadata = yield* currentTopic(item, job, now);
   if (!metadata) return;
+  if (requireThumbnail && !metadata.thumbnailQuote)
+    return yield* new AppError({ message: "Publication requires an approved thumbnail quote" });
   const title = topicTitle(metadata.topic);
   const outcome = yield* attempt("Apply YouTube title and tags", (signal) =>
     client.updateTitle(job, title, item.title, metadata.tags, signal),
@@ -247,15 +256,123 @@ const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: J
   );
 });
 
+const processTitleWithRetry = Effect.fn("processTitleWithRetry")(function* (
+  item: TitleJob,
+  job: Job,
+  requireThumbnail = false,
+) {
+  yield* processTitle(item, job, requireThumbnail).pipe(
+    Effect.catch(
+      Effect.fn(function* (error) {
+        const failedAt = yield* DateTime.now;
+        const delay = Math.min(
+          24 * 3600_000,
+          15 * 60_000 * 2 ** Math.min(Number(item.attempts), 7),
+        );
+        yield* runSql(
+          "Save title error",
+          `UPDATE video_titles SET attempts=attempts+1, next_attempt=?,
+            error=?, updated_at=? WHERE job_id=?`,
+          [
+            DateTime.toEpochMillis(failedAt) + delay,
+            error.message,
+            DateTime.formatIso(failedAt),
+            job.id,
+          ],
+        );
+        yield* Effect.logWarning(`Title ${job.id}: ${error.message}; retry scheduled`);
+      }),
+    ),
+  );
+});
+
+function publicationMetadataReady(item: TitleJob) {
+  return (
+    item.status === "applied" &&
+    item.generation_version === BigInt(titleGenerationVersion) &&
+    item.topic !== null &&
+    item.title === topicTitle(item.topic) &&
+    !!item.thumbnail_quote &&
+    item.thumbnail_applied_quote === thumbnailText(item.thumbnail_quote)
+  );
+}
+
+const requeuePublicationMetadata = Effect.fn("requeuePublicationMetadata")(function* (
+  item: TitleJob,
+  now: DateTime.Utc,
+) {
+  if (item.status !== "applied" && (!item.topic || item.thumbnail_quote)) return item;
+  const generation = item.thumbnail_quote ? item.generation_version : 0n;
+  const nextAttempt = item.status === "applied" ? 0n : item.next_attempt;
+  yield* runSql(
+    "Require complete publication metadata",
+    `UPDATE video_titles SET status='pending', generation_version=?, next_attempt=?,
+      updated_at=? WHERE job_id=? AND status IN ('pending','applied')`,
+    [generation, nextAttempt, DateTime.formatIso(now), item.job_id],
+  );
+  return (yield* listTitles()).find((row) => row.job_id === item.job_id)!;
+});
+
+export const preparePublicationMetadata = Effect.fn("preparePublicationMetadata")(function* (
+  job: Job,
+) {
+  if (!job.youtube_id)
+    return yield* new AppError({ message: "Publication metadata requires an accepted video ID" });
+  const now = yield* DateTime.now;
+  const iso = DateTime.formatIso(now);
+  yield* runSql(
+    "Queue metadata for private upload",
+    `INSERT INTO video_titles (job_id, video_id, created_at, updated_at, next_attempt)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    [job.id, job.youtube_id, iso, iso, DateTime.toEpochMillis(now) + 15 * 60_000],
+  );
+  let item = (yield* listTitles()).find((item) => item.job_id === job.id)!;
+  if (item.video_id !== job.youtube_id) {
+    yield* runSql(
+      "Pause mismatched publication metadata",
+      "UPDATE jobs SET status='review', error=? WHERE id=?",
+      ["Publication metadata belongs to a different video", job.id],
+    );
+    return false;
+  }
+  if (publicationMetadataReady(item)) return true;
+  if (!(yield* Topics).enabled)
+    return yield* new AppError({
+      message: "Publication requires TOPICS_URL for title and thumbnail generation",
+    });
+  item = yield* requeuePublicationMetadata(item, now);
+  if (item.status === "pending" && item.next_attempt <= BigInt(DateTime.toEpochMillis(now))) {
+    yield* processTitleWithRetry(item, job, true);
+    item = (yield* listTitles()).find((item) => item.job_id === job.id)!;
+  }
+  if (publicationMetadataReady(item)) return true;
+  const review = item.status === "manual" || item.status === "review";
+  yield* runSql(
+    "Keep publication behind metadata barrier",
+    "UPDATE jobs SET status=?, next_attempt=?, error=? WHERE id=?",
+    [
+      review ? "review" : "uploading",
+      item.next_attempt,
+      item.error ??
+        (review
+          ? "Review manually managed publication metadata"
+          : "Waiting for title and thumbnail before publication"),
+      job.id,
+    ],
+  );
+  return false;
+});
+
 export const drainTitles = Effect.fn("drainTitles")(function* (limit: number, nowFlag = false) {
   if (!(yield* Topics).enabled) return;
   const now = yield* DateTime.now;
   yield* queueTitles(now);
-  const jobs = yield* listJobs();
+  const jobs = (yield* listJobs()).filter((job) => job.status === "uploaded");
   const pending = (yield* listTitles())
     .filter(
       (item) =>
         item.status === "pending" &&
+        jobs.some((job) => job.id === item.job_id) &&
         (nowFlag || item.next_attempt <= BigInt(DateTime.toEpochMillis(now))),
     )
     .slice(0, limit);
@@ -265,28 +382,6 @@ export const drainTitles = Effect.fn("drainTitles")(function* (limit: number, no
   for (const item of pending) {
     const job = jobs.find((job) => job.id === item.job_id && job.status === "uploaded");
     if (!job) continue;
-    yield* processTitle(item, job).pipe(
-      Effect.catch(
-        Effect.fn(function* (error) {
-          const failedAt = yield* DateTime.now;
-          const delay = Math.min(
-            24 * 3600_000,
-            15 * 60_000 * 2 ** Math.min(Number(item.attempts), 7),
-          );
-          yield* runSql(
-            "Save title error",
-            `UPDATE video_titles SET attempts=attempts+1, next_attempt=?,
-        error=?, updated_at=? WHERE job_id=?`,
-            [
-              DateTime.toEpochMillis(failedAt) + delay,
-              error.message,
-              DateTime.formatIso(failedAt),
-              job.id,
-            ],
-          );
-          yield* Effect.logWarning(`Title ${job.id}: ${error.message}; retry scheduled`);
-        }),
-      ),
-    );
+    yield* processTitleWithRetry(item, job);
   }
 });
