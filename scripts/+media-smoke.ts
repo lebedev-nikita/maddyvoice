@@ -9,29 +9,34 @@ import { Effect, Layer } from "effect";
 import { Settings } from "../src/core.ts";
 import { Media } from "../src/media.ts";
 import { Thumbnails } from "../src/thumbnail.ts";
+import { Waveform } from "../src/waveform.ts";
 
 const exec = promisify(execFile);
 const directory = await mkdtemp(join(tmpdir(), "maddyvoice-media-smoke-"));
 const originalFetch = globalThis.fetch;
+const ffmpeg = process.env.FFMPEG_PATH ?? "ffmpeg";
+const duration = 4;
 try {
   const audio = join(directory, "audio.wav");
   const red = join(directory, "red.png");
   const blue = join(directory, "blue.png");
-  await exec("ffmpeg", [
+  await exec(ffmpeg, [
     "-nostdin",
     "-v",
     "error",
     "-f",
     "lavfi",
     "-i",
-    "sine=frequency=440:duration=2",
+    `sine=frequency=440:duration=${duration}`,
+    "-af",
+    "volume=0:enable='not(between(t,0.35,0.65))'",
     audio,
   ]);
   for (const [color, path] of [
     ["red", red],
     ["blue", blue],
   ] as const) {
-    await exec("ffmpeg", [
+    await exec(ffmpeg, [
       "-nostdin",
       "-v",
       "error",
@@ -66,7 +71,7 @@ try {
       dataDir: directory,
       pollSeconds: 300,
       privacy: "private",
-      ffmpeg: "ffmpeg",
+      ffmpeg,
       ffprobe: "ffprobe",
       expectedChannel: "",
     }),
@@ -91,11 +96,11 @@ try {
   );
   for (const [time, dominant] of [
     ["0.3", 0],
-    ["1.5", 2],
-    ["1.9", 2],
+    ["2.5", 2],
+    ["3.9", 2],
   ] as const) {
     const { stdout } = await exec(
-      "ffmpeg",
+      ffmpeg,
       [
         "-nostdin",
         "-v",
@@ -123,23 +128,85 @@ try {
     "-v",
     "error",
     "-show_entries",
-    "stream=codec_name,width,height,duration:format=duration",
+    "stream=codec_name,width,height,duration,r_frame_rate:format=duration",
     "-of",
     "json",
     output.path,
   ]);
   const probe = JSON.parse(stdout) as {
     format: { duration: string };
-    streams: { codec_name: string; width?: number; height?: number; duration: string }[];
+    streams: {
+      codec_name: string;
+      width?: number;
+      height?: number;
+      duration: string;
+      r_frame_rate: string;
+    }[];
   };
   assert(
     probe.streams.some(
-      (stream) => stream.codec_name === "h264" && stream.width === 1920 && stream.height === 1080,
+      (stream) =>
+        stream.codec_name === "h264" &&
+        stream.width === 1920 &&
+        stream.height === 1080 &&
+        stream.r_frame_rate === "60/1",
     ),
   );
   assert(probe.streams.some((stream) => stream.codec_name === "aac"));
-  assert(probe.streams.every((stream) => Math.abs(Number(stream.duration) - 2) < 0.1));
-  assert(Math.abs(Number(probe.format.duration) - 2) < 0.1);
+  assert(probe.streams.every((stream) => Math.abs(Number(stream.duration) - duration) < 0.1));
+  assert(Math.abs(Number(probe.format.duration) - duration) < 0.1);
+  const pixels = async (time: number, crop: string) => {
+    const result = await exec(
+      ffmpeg,
+      [
+        "-nostdin",
+        "-v",
+        "error",
+        "-ss",
+        String(time),
+        "-i",
+        output.path,
+        "-frames:v",
+        "1",
+        "-vf",
+        `format=rgb24,crop=${crop}`,
+        "-f",
+        "rawvideo",
+        "pipe:1",
+      ],
+      { encoding: "buffer" },
+    );
+    return result.stdout;
+  };
+  const edge = await pixels(0.3, "1:1:10:540");
+  assert(edge[0]! > 150, "Image must fill the frame without side bars");
+  const logo = await pixels(0.3, "1:1:88:990");
+  assert(
+    logo.every((channel) => channel > 180),
+    "YouTube branding must be visible",
+  );
+  const pulsePosition = async (time: number) => {
+    const frame = await pixels(
+      time,
+      `${Waveform.width}:${Waveform.height}:${Waveform.left}:${Waveform.top}`,
+    );
+    let weight = 0;
+    let position = 0;
+    for (let pixel = 0; pixel < frame.length / 3; pixel++) {
+      const y = Math.floor(pixel / Waveform.width);
+      if (Math.abs(y - 48) < 8 || frame[pixel * 3 + 2]! < 145) continue;
+      weight++;
+      position += pixel % Waveform.width;
+    }
+    assert(weight > 100, "Voice pulse must produce visible tall bars");
+    return position / weight;
+  };
+  const before = await pulsePosition(0.95);
+  const after = await pulsePosition(1.2);
+  assert(
+    Math.abs(after - before + 48) < 6,
+    `Voice history moved incorrectly: ${before} -> ${after}`,
+  );
   const thumbnail = await Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* Thumbnails).render(
@@ -153,7 +220,7 @@ try {
   assert.equal(image.readUInt32BE(16), 1280);
   assert.equal(image.readUInt32BE(20), 720);
   console.log(
-    "Media smoke passed: ordered slides, H.264 1080p + AAC, full duration, 1280x720 quote thumbnail",
+    "Media smoke passed: full-frame slides, branding, right-to-left voice history, H.264 1080p60 + AAC, full duration, quote thumbnail",
   );
 } finally {
   globalThis.fetch = originalFetch;
