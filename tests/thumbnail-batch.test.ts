@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyThumbnailBatch } from "../src/thumbnail-batch.ts";
+import { applyThumbnailBatch, thumbnailBatchExitCode } from "../src/thumbnail-batch.ts";
 import { YouTube, YouTubeClient } from "../src/youtube.ts";
 import type { Job } from "../src/database.ts";
 
@@ -77,4 +77,28 @@ it("validates every fingerprint before making any remote change", async () => {
     }
   }
   await expect(run(manifest, new Client(auth))).rejects.toThrow("fingerprint changed");
+});
+
+it.each([
+  "Verify thumbnail destination channel: getaddrinfo EAI_AGAIN oauth2.googleapis.com",
+  "Apply YouTube thumbnail: connect ECONNREFUSED",
+  "Apply YouTube thumbnail: read ECONNRESET",
+  "Apply YouTube thumbnail: ENETUNREACH",
+  "Apply YouTube thumbnail: EHOSTUNREACH",
+  "Apply YouTube thumbnail: ETIMEDOUT",
+  "Apply YouTube thumbnail: HTTP 403 (quotaExceeded)",
+  "Apply YouTube thumbnail: HTTP 429 (rateLimitExceeded)",
+  "Apply YouTube thumbnail: HTTP 503 (backendError)",
+])("retries a transient batch failure: %s", (message) => {
+  expect(thumbnailBatchExitCode(message)).toBe(75);
+});
+
+it.each([
+  "Thumbnail batch changed; review before resuming",
+  "Thumbnail fingerprint changed",
+  "Video source marker does not match",
+  "OAuth HTTP 400 (invalid_grant)",
+  "Set YouTube thumbnail HTTP 403 (forbidden)",
+])("requires review for a permanent batch failure: %s", (message) => {
+  expect(thumbnailBatchExitCode(message)).toBe(78);
 });

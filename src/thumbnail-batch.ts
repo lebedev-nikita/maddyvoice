@@ -6,6 +6,14 @@ import lockfile from "proper-lockfile";
 import { AppError, attempt } from "./core.ts";
 import { YouTube } from "./youtube.ts";
 
+export function thumbnailBatchExitCode(message: string): 75 | 78 {
+  return /quotaExceeded|rateLimitExceeded|HTTP (?:429|5\d\d)|\b(?:EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT)\b|network|fetch|timed?\s?out|already being held/iu.test(
+    message,
+  )
+    ? 75
+    : 78;
+}
+
 const Row = Schema.Struct({
   jobId: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_]+-\d+-\d+$/)),
   video: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{11}$/)),

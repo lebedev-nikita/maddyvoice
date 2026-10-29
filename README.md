@@ -295,6 +295,16 @@ and word limits are enforced before approval. The topic and approved quote are
 saved together before the full transcript is discarded. Existing applied titles
 are preserved; `titles --regenerate` requests new metadata explicitly.
 
+For automatically managed titles, the metadata worker renders and uploads the
+approved quote as a 1280×720 thumbnail before marking the work complete. Images
+remain under `DATA_DIR/thumbnails/`. Failed renders or uploads use the persisted
+metadata retry queue without regenerating the quote or blocking video uploads.
+Confirmed quotes are checkpointed in BoxDB and shown by `cli status`; title-only
+format updates retain the confirmed thumbnail. Manually managed titles are skipped.
+Completed metadata with a saved quote is queued for its missing thumbnail without
+downloading captions or generating metadata again. Videos without a saved quote
+can be updated with an explicit batch below.
+
 To generate quotes from saved transcripts without changing YouTube, provide a
 JSON object with `rows`, each containing `video`, `originalTitle` and `transcript`:
 

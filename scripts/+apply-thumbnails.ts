@@ -1,7 +1,7 @@
 import { Layer, ManagedRuntime } from "effect";
 import { parseArgs } from "node:util";
 import { Settings, safeMessage } from "../src/core.ts";
-import { applyThumbnailBatch } from "../src/thumbnail-batch.ts";
+import { applyThumbnailBatch, thumbnailBatchExitCode } from "../src/thumbnail-batch.ts";
 import { YouTube } from "../src/youtube.ts";
 
 const { values } = parseArgs({
@@ -16,10 +16,7 @@ try {
   const message = safeMessage(cause);
   console.error(message);
   // EX_TEMPFAIL retries the immutable batch; EX_CONFIG requires operator review.
-  process.exitCode =
-    /quotaExceeded|HTTP (?:429|5\d\d)|network|fetch|timed?\s?out|already being held/iu.test(message)
-      ? 75
-      : 78;
+  process.exitCode = thumbnailBatchExitCode(message);
 } finally {
   await runtime.dispose();
 }

@@ -21,6 +21,7 @@ import {
 import { authorizeYouTube, YouTube } from "./youtube.ts";
 import { Topics } from "./topic.ts";
 import { drainTitles, listTitles, regenerateTitles } from "./titles.ts";
+import { Thumbnails } from "./thumbnail.ts";
 
 const services = Layer.mergeAll(
   Store.layer,
@@ -28,6 +29,7 @@ const services = Layer.mergeAll(
   Media.layer,
   YouTube.layer,
   Topics.layer,
+  Thumbnails.layer,
 ).pipe(Layer.provideMerge(Settings.layer), Layer.provideMerge(BunServices.layer));
 const app = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(services));
 const positive = Schema.Int.check(Schema.isGreaterThan(0));
@@ -178,6 +180,8 @@ const status = Command.make("status", {}, () =>
               topic,
               title,
               tags,
+              thumbnail_quote,
+              thumbnail_applied_quote,
               generation_version,
               attempts,
               next_attempt,
@@ -188,6 +192,8 @@ const status = Command.make("status", {}, () =>
               topic,
               title,
               tags,
+              thumbnail_quote,
+              thumbnail_applied_quote,
               generation_version,
               attempts,
               next_attempt,

@@ -54,6 +54,7 @@ tables:
       generation_version: INTEGER DEFAULT 0
       thumbnail_quote?: TEXT
       tags?: TEXT[]
+      thumbnail_applied_quote?: TEXT
 indexes:
   jobs_pending:
     type: regular
@@ -90,3 +91,6 @@ migrations:
   - version: "20261027000006"
     name: video_tags
     checksum: 3930059d421bd59aa941efe64f2ba8fe5f69a74914bd45b5483b21e15e22d9b7
+  - version: "20261029000000"
+    name: automatic_thumbnails
+    checksum: 7b85ea5736cbc887617699367167d469821adb3da787321ce749e6e2c3eef6df

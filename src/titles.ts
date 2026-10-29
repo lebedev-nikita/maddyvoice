@@ -1,9 +1,12 @@
 import { DateTime, Effect, Schema } from "effect";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { attempt, Settings } from "./core.ts";
 import { listJobs, runSql, Store, type Job } from "./database.ts";
 import { commentsReadyAt, titleGenerationVersion, Topics, topicTitle } from "./topic.ts";
 import { YouTube } from "./youtube.ts";
 import { VideoTags } from "./video-tags.ts";
+import { Thumbnails } from "./thumbnail.ts";
 
 const TitleJob = Schema.Struct({
   job_id: Schema.String,
@@ -12,6 +15,7 @@ const TitleJob = Schema.Struct({
   transcript: Schema.NullOr(Schema.String),
   topic: Schema.NullOr(Schema.String),
   thumbnail_quote: Schema.NullOr(Schema.String),
+  thumbnail_applied_quote: Schema.NullOr(Schema.String),
   tags: Schema.NullOr(Schema.fromJsonString(VideoTags.fields.tags)),
   generation_version: Schema.BigInt,
   title: Schema.NullOr(Schema.String),
@@ -49,12 +53,13 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
     if (item.status !== "applied" || !item.topic) continue;
     if (
       item.generation_version === BigInt(titleGenerationVersion) &&
-      item.title === topicTitle(item.topic)
+      item.title === topicTitle(item.topic) &&
+      (!item.thumbnail_quote || item.thumbnail_applied_quote === item.thumbnail_quote)
     )
       continue;
     // Retain the previous title for remote reconciliation, including after a lost response.
     yield* runSql(
-      "Queue title format update",
+      "Queue saved metadata update",
       "UPDATE video_titles SET status='pending', next_attempt=0, error=NULL, updated_at=? WHERE job_id=? AND status='applied'",
       [iso, item.job_id],
     );
@@ -158,6 +163,7 @@ const currentTopic = Effect.fn("currentTopic")(function* (
   if (item.generation_version === BigInt(titleGenerationVersion) && item.topic)
     return {
       topic: item.topic,
+      thumbnailQuote: item.thumbnail_quote,
       tags: item.tags ?? undefined,
     };
   const text = yield* readTranscript(item, job, now);
@@ -182,7 +188,29 @@ const currentTopic = Effect.fn("currentTopic")(function* (
       job.id,
     ],
   );
-  return { topic, tags };
+  return { topic, thumbnailQuote, tags };
+});
+
+const applyThumbnail = Effect.fn("applyThumbnail")(function* (
+  item: TitleJob,
+  job: Job,
+  quote: string | null,
+) {
+  if (!quote || item.thumbnail_applied_quote === quote) return;
+  const thumbnails = yield* Thumbnails;
+  const { dataDir } = yield* Settings;
+  const path = yield* thumbnails.render(quote, join(dataDir, "thumbnails", `${job.id}.png`));
+  const png = yield* attempt("Read rendered thumbnail", () => readFile(path));
+  const client = yield* (yield* YouTube).load();
+  yield* attempt("Apply generated YouTube thumbnail", (signal) =>
+    client.setThumbnail(job, png, signal),
+  );
+  yield* runSql(
+    "Save thumbnail confirmation",
+    "UPDATE video_titles SET thumbnail_applied_quote=?, updated_at=? WHERE job_id=?",
+    [quote, DateTime.formatIso(yield* DateTime.now), job.id],
+  );
+  yield* Effect.logInfo(`Updated thumbnail for ${job.id}`);
 });
 
 const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: Job) {
@@ -203,6 +231,7 @@ const processTitle = Effect.fn("processTitle")(function* (item: TitleJob, job: J
   const outcome = yield* attempt("Apply YouTube title and tags", (signal) =>
     client.updateTitle(job, title, item.title, metadata.tags, signal),
   );
+  if (outcome === "applied") yield* applyThumbnail(item, job, metadata.thumbnailQuote);
   yield* runSql(
     "Save title result",
     "UPDATE video_titles SET status=?, title=?, next_attempt=0, error=NULL, updated_at=? WHERE job_id=?",

@@ -1,4 +1,4 @@
-import { Config, Effect } from "effect";
+import { Config, Context, Effect, Layer, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -54,8 +54,8 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
     `[mask]format=rgba,geq=r=17:g=20:b=16:a='255*clip((832-X)/400,0,1)'[shade];` +
     `[photo][shade]overlay,${text.join(",")},` +
     `drawtext=fontfile=font.ttf:textfile=brand.txt:expansion=none:fontcolor=0xfaf9f1@0.6:fontsize=22:x=68:y=660`;
-  yield* spawner
-    .string(
+  const process = yield* spawner
+    .spawn(
       ChildProcess.make(
         binary,
         [
@@ -86,6 +86,14 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
           }),
       ),
     );
+  const [output, code] = yield* Effect.all(
+    [process.all.pipe(Stream.decodeText(), Stream.mkString), process.exitCode],
+    { concurrency: "unbounded" },
+  ).pipe(Effect.mapError(() => new AppError({ message: "Cannot read thumbnail FFmpeg output" })));
+  if (Number(code) !== 0)
+    return yield* new AppError({
+      message: `Thumbnail FFmpeg exited ${code}; requires drawtext and geq: ${output.slice(-1000)}`,
+    });
   yield* attempt("Save thumbnail", async () => {
     await mkdir(dirname(destination), { recursive: true });
     // The staging file is placed beside the destination for an atomic rename across filesystems.
@@ -99,3 +107,22 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
   });
   return destination;
 }, Effect.scoped);
+
+export class Thumbnails extends Context.Service<
+  Thumbnails,
+  { render(quote: string, destination: string): Effect.Effect<string, AppError> }
+>()("maddyvoice/Thumbnails") {
+  static readonly layer = Layer.effect(
+    Thumbnails,
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return Thumbnails.of({
+        render: (quote, destination) =>
+          renderThumbnail(quote, destination).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError((error) => new AppError({ message: error.message })),
+          ),
+      });
+    }),
+  );
+}
