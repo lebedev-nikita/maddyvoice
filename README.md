@@ -304,6 +304,9 @@ format updates retain the confirmed thumbnail. Manually managed titles are skipp
 Completed metadata with a saved quote is queued for its missing thumbnail without
 downloading captions or generating metadata again. Videos without a saved quote
 can be updated with an explicit batch below.
+The destination channel must have custom thumbnails enabled under YouTube
+Studio's feature eligibility. OAuth authorization alone does not enable them;
+YouTube's permission refusal is saved in the metadata error for diagnosis.
 
 To generate quotes from saved transcripts without changing YouTube, provide a
 JSON object with `rows`, each containing `video`, `originalTitle` and `transcript`:
