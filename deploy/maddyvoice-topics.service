@@ -1,7 +1,7 @@
 [Unit]
-Description=Maddyvoice topic generator through Codex
+Description=Maddyvoice topic generator through CLIProxyAPI
 Wants=network-online.target
-After=network-online.target
+After=network-online.target cliproxyapi.service
 
 [Service]
 Type=simple
@@ -9,8 +9,7 @@ User=pi
 Group=maddyvoice
 WorkingDirectory=/var/lib/maddyvoice-topics
 Environment=HOME=/var/lib/maddyvoice-topics
-Environment=CODEX_HOME=/home/pi/.codex
-Environment=CODEX_PATH=/opt/maddyvoice/bin/codex
+Environment=OPENAI_BASE_URL=http://127.0.0.1:8317/v1
 Environment=TOPIC_MODEL=gpt-6.1-sol
 Environment=TOPIC_FILTER_MODEL=gpt-6-luna
 Environment=TOPIC_EXTRACT_MODEL=gpt-6.1-sol
@@ -38,11 +37,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=tmpfs
-BindPaths=/home/pi/.codex
 BindPaths=/home/pi/.config/tg-cli /home/pi/.local/share/tg-cli /home/pi/.local/share/WireCat /home/pi/.cache/tg-cli
 BindReadOnlyPaths=/home/pi/.bun/install/global/node_modules
 BindReadOnlyPaths=-/run/user/1000/bus
-ReadWritePaths=/var/lib/maddyvoice-topics /home/pi/.codex /home/pi/.config/tg-cli /home/pi/.local/share/tg-cli /home/pi/.local/share/WireCat /home/pi/.cache/tg-cli
+ReadWritePaths=/var/lib/maddyvoice-topics /home/pi/.config/tg-cli /home/pi/.local/share/tg-cli /home/pi/.local/share/WireCat /home/pi/.cache/tg-cli
 
 [Install]
 WantedBy=multi-user.target

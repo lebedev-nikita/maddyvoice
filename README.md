@@ -142,24 +142,25 @@ comments or generating a topic, and at least 15 minutes after upload for serving
 Russian captions, preferring YouTube's automatic ASR track. Captions are fetched
 through the official authenticated API, not a public transcript scraper.
 
-Run the topic service separately under an account already logged into Codex and
-`tg`. Select its existing Telegram profile explicitly:
+Run the topic service separately under an account already logged into `tg`,
+with access to a [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+instance that has a Codex login. Select its existing Telegram profile explicitly:
 
 ```sh
-codex login status
+export OPENAI_BASE_URL=http://127.0.0.1:8317/v1
+export OPENAI_API_KEY=<proxy client key>
 export TG_PROFILE=personal
 bun run topics
 ```
 
-It uses `gpt-6-luna` to filter comment noise and `gpt-6.1-sol` for nickname extraction,
-titles and independent review,
-through the saved Codex ChatGPT login, with no transcription
-API key. This uses that account's Codex limits. The transcript and selected comment
-bodies are sent to OpenAI;
-YouTube credentials and upload session URLs are excluded. Codex receives an empty
-workspace, a read-only sandbox, disabled shell/browser/app tools, and a required
-JSON response schema. Its user configuration and persistent session history are
-not loaded. The topic endpoint listens only on `127.0.0.1:11435`.
+It calls the proxy's OpenAI-compatible Responses API through the `openai` SDK.
+`gpt-6-luna` filters comment noise; `gpt-6.1-sol` extracts nicknames, writes titles
+and reviews them independently. Models are configured by the `TOPIC_*_MODEL`
+variables in [.env.example](.env.example). Requests use the proxy's Codex account
+limits. The transcript and selected comment bodies are sent to OpenAI; YouTube
+credentials and upload session URLs are excluded. Every call is a stateless request
+with a required JSON output schema and no client-side tools. The topic endpoint
+listens only on `127.0.0.1:11435`.
 
 After the hour has passed, the topic service verifies the source post's ID and
 publication time through `tg`, then reads its earliest 500 comments, or all
@@ -169,9 +170,9 @@ selecting the first 500; an incomplete scan is retried. Empty bodies count towar
 the limit but are excluded from model input. Commenter names and usernames are
 discarded.
 
-Luna first selects useful comment IDs in batches of up to 100 text bodies.
+The filter model first selects useful comment IDs in batches of up to 100 text bodies.
 It retains possible nicknames and ambiguous comments; selected texts stay unchanged.
-Sol identifies nickname spellings in batches of up to 50 selected bodies;
+The extraction model identifies nickname spellings in batches of up to 50 selected bodies;
 the application finds their exact quotes and comment IDs in the original texts.
 Each stage runs at most two isolated calls concurrently and combines all results
 before proceeding. Failed filtering or extraction retries the title instead of
@@ -202,7 +203,7 @@ reasoning, and every call starts an isolated session.
 Titles should name internet personalities when they are the main subject. If
 comments are closed, empty or contain no supported candidates, the existing
 registry generator is used. Telegram read failures leave the title queued instead
-of triggering that fallback. In the registry path, Codex can use web search to
+of triggering that fallback. In the registry path, the model can use web search to
 check uncertain nicknames against official profiles and
 channels, using only the nickname and minimal context in queries. Search results
 may clarify identity and spelling; the transcript remains the source for the
@@ -214,14 +215,14 @@ deployments. It is validated and reloaded for every request, without a service
 restart. The initial entry is Зио, confirmed by the user; the short alias Зи
 requires a contextual hint from the same transcript quote. Aliases are never
 globally replaced in transcripts. The app supplies matching transcript quotes,
-Codex selects registry IDs, and the app inserts canonical nicknames into
+The model selects registry IDs, and the app inserts canonical nicknames into
 `Мэддисон о <Names>: <topic>` titles. Without selected names it uses
 `Мэддисон о <topic>`.
 Unknown, ambiguous or unsupported IDs and duplicated author names are rejected.
 
 New names are collected automatically as unconfirmed proposals under
 `TOPICS_DATA_DIR/people-candidates/`, with a short transcript quote, suggested
-spelling and any profile links found by Codex. Repeated identical proposals reuse
+spelling and any profile links found by the model. Repeated identical proposals reuse
 the same file. These files retain excerpts after the full transcript is discarded;
 delete reviewed proposals when no longer needed. Source links are research leads,
 not verified evidence. Review them against official profiles and the recording
@@ -266,8 +267,8 @@ cat transcript.txt | bun scripts/+comment-title-check.ts \
 The experiment reads at most 100 comments and refuses incomplete threads.
 Only comment bodies are passed to extraction; author metadata is discarded.
 Candidates need exact supporting quotes, and at least two distinct comment
-bodies before title generation can use them. Each generation and semantic check gets a fresh Codex
-session with no web search, repository access, people registry or conversation
+bodies before title generation can use them. Each generation and semantic check is a fresh stateless
+model request with no web search, repository access, people registry or conversation
 history. Transcript-only and candidate-assisted runs use the same title prompt.
 Input and prompt hashes are recorded before model calls; a report path cannot be
 reused. Raw comments and transcripts stay in memory. Reports contain candidate

@@ -21,6 +21,7 @@
     "@effect/platform-bun": "4.0.0-rc.118",
     "cheerio": "^1.2.0",
     "effect": "4.0.0-rc.118",
+    "openai": "^7.45.1",
     "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {

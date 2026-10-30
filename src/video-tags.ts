@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
-import { isolatedModel } from "./commands.ts";
+import { isolatedModel } from "./model.ts";
 
 export const defaultVideoTags = ["Мэддисон", "голосовые", "maddyvoice"];
 export const VideoTags = Schema.Struct({
@@ -8,7 +8,9 @@ export const VideoTags = Schema.Struct({
     Schema.String.check(
       Schema.isMinLength(1),
       Schema.isMaxLength(80),
-      Schema.isPattern(/^ *[^#<>,"\p{Cc}\s]+(?: +[^#<>,"\p{Cc}\s]+)? *$/u),
+      // Explicit control ranges equal \p{Cc}; strict model schemas reject Unicode property classes.
+      // oxlint-disable-next-line no-control-regex
+      Schema.isPattern(/^ *[^#<>,"\x00-\x1f\x7f-\x9f\s]+(?: +[^#<>,"\x00-\x1f\x7f-\x9f\s]+)? *$/u),
     ),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
 });

@@ -15,6 +15,7 @@ import {
   type NickCandidate,
 } from "../src/comment-topics.ts";
 import { commandJson } from "../src/commands.ts";
+import { ModelProxy } from "../src/model.ts";
 import { Transcript, topicTitle } from "../src/topic.ts";
 import { reviewedTopic, reviewPrompt, type TopicReview } from "../src/topic-review.ts";
 
@@ -228,5 +229,12 @@ const program = Effect.gen(function* () {
 });
 
 await Effect.runPromise(
-  program.pipe(Effect.provide(CommentTopics.layer.pipe(Layer.provideMerge(BunServices.layer)))),
+  program.pipe(
+    Effect.provide(
+      CommentTopics.layer.pipe(
+        Layer.provide(ModelProxy.layer),
+        Layer.provideMerge(BunServices.layer),
+      ),
+    ),
+  ),
 );

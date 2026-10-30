@@ -82,33 +82,71 @@ function levelAt(levels: Float32Array, time: number): number {
   return levels[lower]! * (1 - blend) + levels[Math.ceil(position)]! * blend;
 }
 
-const edgeOpacity = [0.24, 0.4, 0.6, 0.78, 0.92];
+/** Piecewise-linear lookup over sorted [position, value] points, clamped at both ends. */
+function ramp(points: readonly (readonly [number, number])[], position: number): number {
+  const next = points.findIndex(([at]) => at >= position);
+  if (next <= 0) return points[next === 0 ? 0 : points.length - 1]![1];
+  const [x0, y0] = points[next - 1]!;
+  const [x1, y1] = points[next]!;
+  return y0 + ((y1 - y0) * (position - x0)) / (x1 - x0);
+}
+
+const last = Waveform.columns - 1;
+const edgeOpacity = [
+  [-1, 0],
+  [0, 0.24],
+  [1, 0.4],
+  [2, 0.6],
+  [3, 0.78],
+  [4, 0.92],
+  [5, 1],
+  [last - 1, 1],
+  [last, 0.85],
+  [last + 1, 0],
+] as const;
+const base = [231, 239, 232] as const;
 const accent = [
-  [186, 220, 173],
-  [171, 219, 156],
-  [157, 216, 142],
+  [last - 3, base],
+  [last - 2, [186, 220, 173]],
+  [last - 1, [171, 219, 156]],
+  [last, [157, 216, 142]],
 ] as const;
 
-/** Straight-alpha RGBA; fixed capsule positions, delayed heights moving left. */
+/**
+ * Straight-alpha RGBA. Every capsule records one columnDelay slot and slides left
+ * continuously, so motion advances every frame instead of jumping 12 px per slot.
+ * The newest capsule tracks the live level while it fades in on the right.
+ */
 export function waveformFrame(levels: Float32Array, time: number): Uint8Array {
   const frame = new Uint8Array(Waveform.width * Waveform.height * 4);
-  for (let column = 0; column < Waveform.columns; column++) {
-    const value = levelAt(levels, time - (Waveform.columns - 1 - column) * Waveform.columnDelay);
+  const phase = time / Waveform.columnDelay;
+  const newest = Math.floor(phase);
+  for (let slot = newest - Waveform.columns - 1; slot <= newest; slot++) {
+    const column = last + 1 - (phase - slot);
+    const opacityScale = ramp(edgeOpacity, column);
+    if (opacityScale <= 0) continue;
+    const value = levelAt(levels, Math.min(time, (slot + 1) * Waveform.columnDelay));
     const halfBody = (76 * value) / 2;
-    const opacity =
-      (0.38 + 0.56 * Math.sqrt(value)) *
-      (edgeOpacity[column] ?? (column === Waveform.columns - 1 ? 0.85 : 1));
-    const color = accent[column - (Waveform.columns - 3)] ?? [231, 239, 232];
+    const opacity = (0.38 + 0.56 * Math.sqrt(value)) * opacityScale;
+    const color = [0, 1, 2].map((channel) =>
+      ramp(
+        accent.map(([at, rgb]) => [at, rgb[channel]!] as const),
+        column,
+      ),
+    );
     const centerX = 8 + column * 12;
+    const firstX = Math.max(0, Math.ceil(centerX - 5));
+    const lastX = Math.min(Waveform.width - 1, Math.floor(centerX + 5));
     for (let y = 0; y < Waveform.height; y++) {
       const dy = Math.max(Math.abs(y - 48) - halfBody, 0);
-      for (let dx = -5; dx <= 5; dx++) {
+      for (let x = firstX; x <= lastX; x++) {
+        const dx = x - centerX;
         const coverage = Math.min(1, Math.max(0, 4 - Math.sqrt(dx * dx + dy * dy)));
         if (coverage === 0) continue;
-        const pixel = (y * Waveform.width + centerX + dx) * 4;
-        frame[pixel] = color[0]!;
-        frame[pixel + 1] = color[1]!;
-        frame[pixel + 2] = color[2]!;
+        const pixel = (y * Waveform.width + x) * 4;
+        frame[pixel] = Math.round(color[0]!);
+        frame[pixel + 1] = Math.round(color[1]!);
+        frame[pixel + 2] = Math.round(color[2]!);
         frame[pixel + 3] = Math.round(coverage * opacity * 255);
       }
     }

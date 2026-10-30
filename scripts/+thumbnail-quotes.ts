@@ -1,5 +1,5 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { Effect, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -10,7 +10,7 @@ import {
   thumbnailQuotePrompt,
   thumbnailReviewPrompt,
 } from "../src/thumbnail-quote.ts";
-import { codexSettings } from "../src/commands.ts";
+import { ModelProxy, topicModel } from "../src/model.ts";
 
 const Source = Schema.Struct({
   rows: Schema.Array(
@@ -37,7 +37,7 @@ const program = Effect.gen(function* () {
     Schema.decodeUnknownSync(Source)(JSON.parse(await readFile(values.source!, "utf8"))),
   );
   const service = yield* ThumbnailQuotes;
-  const { model } = yield* codexSettings;
+  const model = yield* topicModel;
   yield* attempt("Create quote directory", () => mkdir(output, { recursive: true }));
   const rows = yield* Effect.forEach(
     source.rows,
@@ -68,5 +68,8 @@ const program = Effect.gen(function* () {
       mode: 0o600,
     }),
   );
-}).pipe(Effect.provide(ThumbnailQuotes.layer), Effect.provide(BunServices.layer));
+}).pipe(
+  Effect.provide(ThumbnailQuotes.layer.pipe(Layer.provide(ModelProxy.layer))),
+  Effect.provide(BunServices.layer),
+);
 BunRuntime.runMain(program);
