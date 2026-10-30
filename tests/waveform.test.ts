@@ -48,20 +48,24 @@ describe("voice waveform", () => {
     expect(columnPixels(frame, 20).filter((alpha) => alpha > 0)).toHaveLength(7);
   });
 
-  it("passes heights to the left while all capsule positions and widths stay fixed", () => {
+  it("slides recorded capsules left every frame and keeps slot boundaries on the grid", () => {
     const levels = Float32Array.from({ length: 1000 }, (_, index) =>
       Math.exp(-(((index * Waveform.sampleStep - 0.75) / 0.08) ** 2)),
     );
     const before = waveformFrame(levels, 1.77);
+    const halfway = waveformFrame(levels, 1.77 + Waveform.columnDelay / 2);
     const after = waveformFrame(levels, 1.77 + Waveform.columnDelay);
     expect(columnPixels(after, 31)).toEqual(columnPixels(before, 32));
-    expect(columnPixels(after, 32)).not.toEqual(columnPixels(before, 32));
+    const pixelsAt = (frame: Uint8Array, x: number) =>
+      Array.from({ length: Waveform.height }, (_, y) => frame[(y * Waveform.width + x) * 4 + 3]!);
+    expect(pixelsAt(halfway, 8 + 32 * 12 - 6)).toEqual(columnPixels(before, 32));
     const baseline = (frame: Uint8Array) =>
       Array.from(
         { length: Waveform.width },
         (_, x) => frame[(48 * Waveform.width + x) * 4 + 3]! > 0,
       );
     expect(baseline(after)).toEqual(baseline(before));
+    expect(baseline(halfway)).not.toEqual(baseline(before));
     expect(before.length).toBe(Waveform.width * Waveform.height * 4);
   });
 });
