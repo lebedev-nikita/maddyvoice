@@ -8,3 +8,4 @@ coverage/
 .DS_Store
 # Separate Sites checkout with its own source repository.
 website/
+.claude/settings.local.json
