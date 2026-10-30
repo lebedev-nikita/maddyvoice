@@ -13,20 +13,19 @@ Two systemd services run the application:
 - [maddyvoice.service](maddyvoice.service) polls Telegram, renders videos with
   FFmpeg, publishes to YouTube and manages title retries as `maddyvoice`.
 - [maddyvoice-topics.service](maddyvoice-topics.service) generates topics through
-  Codex as `pi`, listening only on `127.0.0.1:11435`.
+  the local CLIProxyAPI as `pi`, listening only on `127.0.0.1:11435`.
 
 Both run TypeScript source directly with the pinned Bun in
 `/opt/maddyvoice/bin/bun`; the `dist` build is not used by the services.
 
-| Location                                  | Purpose                                                  |
-| ----------------------------------------- | -------------------------------------------------------- |
-| `/opt/maddyvoice`                         | Application source, dependencies and pinned ARM64 Bun    |
-| `/etc/maddyvoice.env`                     | Runtime settings, mode `0640`, owner `root:maddyvoice`   |
-| `/etc/maddyvoice-topics.env`              | Topic service's Telegram profile and executable settings |
-| `/var/lib/maddyvoice`                     | Private BoxDB state, authorization and rendered videos   |
-| `/var/lib/maddyvoice-topics`              | Private topic service state                              |
-| `/home/pi/.codex`                         | Existing Codex login shared with the topic service       |
-| `/etc/systemd/system/maddyvoice*.service` | Installed copies of both service units                   |
+| Location                                  | Purpose                                                |
+| ----------------------------------------- | ------------------------------------------------------ |
+| `/opt/maddyvoice`                         | Application source, dependencies and pinned ARM64 Bun  |
+| `/etc/maddyvoice.env`                     | Runtime settings, mode `0640`, owner `root:maddyvoice` |
+| `/etc/maddyvoice-topics.env`              | Topic service's proxy key and Telegram profile         |
+| `/var/lib/maddyvoice`                     | Private BoxDB state, authorization and rendered videos |
+| `/var/lib/maddyvoice-topics`              | Private topic service state                            |
+| `/etc/systemd/system/maddyvoice*.service` | Installed copies of both service units                 |
 
 Data stays on the system disk's ext4 filesystem. The external exFAT media disk
 is not used for database files or credentials. The service runs under its own
@@ -36,9 +35,10 @@ are mode `0600`.
 ## Deploy an update
 
 This procedure assumes the Pi is already provisioned with the SSH alias
-`pibox`, sudo access, FFmpeg, pinned Bun, Codex and `tg`, and working YouTube,
-Codex and Telegram authorization. It updates application code without replacing
-runtime data.
+`pibox`, sudo access, FFmpeg, pinned Bun and `tg`, working YouTube and Telegram
+authorization, a running CLIProxyAPI with a Codex login, and its client key in
+`/etc/maddyvoice-topics.env`. It
+updates application code without replacing runtime data.
 
 A deployment preserves existing videos. To fill historical gaps across the
 current publication boundary, use the explicitly authorized catch-up command
@@ -88,8 +88,7 @@ below. Existing YouTube publication dates cannot be reordered by a code update.
    Keep application source and dependencies root-owned and readable by both
    service accounts. Do not copy macOS `node_modules` or overwrite
    `/var/lib/maddyvoice`, `/var/lib/maddyvoice-topics`, `/etc/maddyvoice.env`,
-   `/etc/maddyvoice-topics.env` or
-   `/home/pi/.codex` with local copies.
+   or `/etc/maddyvoice-topics.env` with local copies.
 
 5. Validate and install both service units, then reload systemd:
 
@@ -151,7 +150,7 @@ back over the Pi's current state.
 
 For a cold backup or host migration, stop both services, verify they have exited,
 and copy both private state directories and `/etc/maddyvoice.env`, including any
-BoxDB WAL file. Preserve the existing Codex login when migrating hosts.
+BoxDB WAL file. Copy `/etc/maddyvoice-topics.env` when migrating hosts.
 Use BoxDB's conversion or backup facilities for a live snapshot. Protect backups
 as credentials, and run BoxDB's full file check after restoration. Any queued
 video paths must refer to the restored files; preserve upload session URLs.
@@ -170,21 +169,20 @@ Resource settings are declared in the service units. Memory limits require
 kernel cgroup support; do not treat the declared values as a verified hard cap
 on this Pi.
 
-## Codex topic service
+## Topic service
 
 `maddyvoice-topics.service` runs the loopback topic endpoint on port `11435` as
-`pi`, using the existing ChatGPT login in `/home/pi/.codex`. The publisher keeps
-its separate `maddyvoice` account and private YouTube authorization. The topic
-service sees the Codex directory through a private home mount; it shares the
-original auth file so credential refreshes are not forked into competing copies.
-No Codex credential is copied into the application repository or publisher data.
+`pi`. The publisher keeps its separate `maddyvoice` account and private YouTube
+authorization. The topic service calls the Pi's `cliproxyapi.service` at
+`http://127.0.0.1:8317/v1` with the Responses API. The proxy owns the Codex
+login; the topic service holds only the proxy client key in
+`/etc/maddyvoice-topics.env`, never in the application repository or publisher data.
 
-The pinned Codex 0.164.0 binary is installed in `/opt/maddyvoice/bin/codex`.
-The model and executable are configured in the service unit;
-[the Codex adapter](../src/codex.ts) defines its sandbox and search settings.
-Caption text and selected comment bodies are sent to OpenAI through Codex, using
-the account's usage limits.
-It does not need Ollama, local model weights or a paid transcription key.
+Models and the proxy URL are configured in the service unit;
+[the model adapter](../src/model.ts) defines output schemas and web search.
+Caption text and selected comment bodies are sent to OpenAI through the proxy,
+using the Codex account's usage limits. It does not need Ollama, local model
+weights or a paid transcription key.
 
 The publisher environment contains:
 
@@ -193,10 +191,11 @@ TOPICS_URL=http://127.0.0.1:11435
 ```
 
 The topic service loads `/etc/maddyvoice-topics.env`. Create it with mode `0640`
-and owner `root:maddyvoice`, selecting a Telegram profile already authorized for
-the service's account and environment:
+and owner `root:maddyvoice`, with the proxy client key and a Telegram profile already authorized for the
+service's account and environment:
 
 ```dotenv
+OPENAI_API_KEY=<proxy client key>
 TG_PROFILE=personal
 TG_PATH=/opt/maddyvoice/bin/tg
 # TELEGRAM_CHANNEL=maddysontg
@@ -223,8 +222,9 @@ metadata waits block later recordings. Updates to already published videos conti
 in the separate metadata worker.
 
 The health route checks service readiness; generating a real title also verifies
-Telegram access, Codex authentication and model access. If Codex login expires, log in again as
-`pi` with its installed Codex CLI. Model failures retain metadata for retry and
+Telegram access, the proxy key and model access. If the proxy's Codex login expires,
+reauthorize it as described in the CLIProxyAPI setup; if the client key rotates, replace it
+in `/etc/maddyvoice-topics.env` and restart the topic service. Model failures retain metadata for retry and
 keep staged videos private. The transcript cache is removed after a
 topic is saved; generated topics and application publication state stay in BoxDB.
 

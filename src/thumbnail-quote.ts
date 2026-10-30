@@ -1,6 +1,6 @@
 import { Config, Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt } from "./core.ts";
-import { codexSettings, isolatedModel } from "./commands.ts";
+import { isolatedModel, topicModel } from "./model.ts";
 
 export const ThumbnailQuote = Schema.Struct({
   thumbnailQuote: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
@@ -98,7 +98,7 @@ export class ThumbnailQuotes extends Context.Service<
   static readonly layer = Layer.effect(
     ThumbnailQuotes,
     Effect.gen(function* () {
-      const { model } = yield* codexSettings;
+      const model = yield* topicModel;
       const run = yield* isolatedModel;
       const reviewModel = yield* Config.String("TOPIC_REVIEW_MODEL").pipe(
         Config.withDefault("gpt-6.1-sol"),

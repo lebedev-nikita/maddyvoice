@@ -19,3 +19,11 @@ Backoff, review and YouTube processing block all later recordings. Stage uploads
 privately, persist their YouTube IDs, then confirm visibility before advancing.
 History imports share the publisher lock and commit only complete scans. Reject
 new recordings older than a completed or potentially visible publication.
+
+# Model calls
+
+The topic service calls models only through `ModelProxy` in `src/model.ts`, which
+uses the Responses API of a CLIProxyAPI instance (`OPENAI_BASE_URL`,
+`OPENAI_API_KEY`). Tests replace it with a fake layer and need no proxy. Running
+the topic server, `scripts/+thumbnail-quotes.ts` or `scripts/+comment-title-check.ts`
+spends the proxy's Codex usage limits.

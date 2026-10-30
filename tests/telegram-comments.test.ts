@@ -5,7 +5,8 @@ import { ConfigProvider, DateTime, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { AppError } from "../src/core.ts";
 import { collectFirstComments, TelegramComments } from "../src/telegram-comments.ts";
-import { CodexTopics } from "../src/codex.ts";
+import { TopicService } from "../src/topic-service.ts";
+import { ModelProxy, type ModelRequest } from "../src/model.ts";
 import { CommentTopics } from "../src/comment-topics.ts";
 import { commentsReadyAt } from "../src/topic.ts";
 
@@ -113,6 +114,26 @@ function spawnerLayer(
         });
       }),
     ),
+  );
+}
+function modelLayer(
+  reply: (request: ModelRequest) => { value: unknown; delay?: number; onExit?: () => void },
+) {
+  return Layer.succeed(
+    ModelProxy,
+    ModelProxy.of({
+      model: "test-model",
+      json: (request) =>
+        Effect.suspend(() => {
+          const { value, delay = 0, onExit } = reply(request);
+          return Effect.sleep(delay).pipe(
+            Effect.map(() => {
+              onExit?.();
+              return value;
+            }),
+          );
+        }),
+    }),
   );
 }
 const config = ConfigProvider.layer(
@@ -230,19 +251,19 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
     id: String(index + 1),
     text: `Ворон в комментарии ${index + 1}`,
   }));
-  const commands: ChildProcess.StandardCommand[] = [];
+  const requests: ModelRequest[] = [];
   let active = 0;
   let maxActive = 0;
   const layer = CommentTopics.layer.pipe(
     Layer.provide(
-      spawnerLayer((command, prompt) => {
+      modelLayer((request) => {
+        const { prompt } = request;
         const batch = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1)) as typeof comments;
         expect(batch.length).toBeLessThanOrEqual(50);
-        commands.push(command);
+        requests.push(request);
         active++;
         maxActive = Math.max(maxActive, active);
-        expect(command.args).toContain("--ignore-rules");
-        expect(command.args).toContain('web_search="disabled"');
+        expect(request.webSearch).toBeFalsy();
         return {
           delay: 20,
           onExit: () => {
@@ -258,15 +279,14 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
     CommentTopics.use((service) =>
       Effect.gen(function* () {
         expect((yield* service.extract([])).candidates).toEqual([]);
-        expect(commands).toHaveLength(0);
+        expect(requests).toHaveLength(0);
         return yield* service.extract(comments);
       }),
     ).pipe(Effect.provide(layer)),
   );
-  expect(commands).toHaveLength(10);
+  expect(requests).toHaveLength(10);
   expect(maxActive).toBe(2);
   expect(active).toBe(0);
-  expect(new Set(commands.map((command) => command.options.cwd)).size).toBe(10);
   expect(result.candidates).toHaveLength(1);
   const ids = result.candidates[0]!.mentions.map((mention) => mention.commentId);
   expect(ids).toHaveLength(50);
@@ -274,7 +294,7 @@ it("processes 500 bodies in isolated batches and combines weak mentions across b
   expect(ids).toEqual(expect.arrayContaining(["1", "51", "451"]));
 });
 
-it("filters bodies in parallel Luna batches while preserving selected text and excluding author metadata", async () => {
+it("filters bodies in parallel filter-model batches while preserving selected text and excluding author metadata", async () => {
   const comments = Array.from({ length: 250 }, (_, index) => ({
     id: String(index + 1),
     text: index % 2 ? "Ха-ха" : `Ворон в игре ${index}`,
@@ -285,8 +305,8 @@ it("filters bodies in parallel Luna batches while preserving selected text and e
   let calls = 0;
   const layer = CommentTopics.layer.pipe(
     Layer.provide(
-      spawnerLayer((command, prompt) => {
-        expect(command.args).toContain("gpt-6-luna");
+      modelLayer(({ prompt, model }) => {
+        expect(model).toBe("gpt-6-luna");
         expect(prompt).not.toContain("hidden-author");
         const input = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1));
         expect(input.comments.length).toBeLessThanOrEqual(100);
@@ -321,7 +341,7 @@ it("filters bodies in parallel Luna batches while preserving selected text and e
   expect(active).toBe(0);
 });
 
-it("uses comment candidates in the production Codex service and removes the duplicated author prefix", async () => {
+it("uses comment candidates in the production topic service and removes the duplicated author prefix", async () => {
   const transcript = "Вор опять спорит о выборе новой игры для эфира.";
   const comments = [
     { id: "a", text: "Это Ворон." },
@@ -332,7 +352,7 @@ it("uses comment candidates in the production Codex service and removes the dupl
     mentions: comments.map((entry) => ({ commentId: entry.id, quote: entry.text })),
   };
   let reads = 0;
-  const layer = CodexTopics.layer.pipe(
+  const layer = TopicService.layer.pipe(
     Layer.provide(
       Layer.succeed(
         VideoTagGenerator,
@@ -396,7 +416,7 @@ it("uses comment candidates in the production Codex service and removes the dupl
             },
           }),
         ),
-        spawnerLayer(() => {
+        modelLayer(() => {
           throw new Error("Must not invoke legacy generator");
         }),
       ),
@@ -411,7 +431,7 @@ it("uses comment candidates in the production Codex service and removes the dupl
   );
   expect(
     await Effect.runPromise(
-      CodexTopics.use((service) => service.summarize(transcript, source)).pipe(
+      TopicService.use((service) => service.summarize(transcript, source)).pipe(
         Effect.provide(layer),
       ),
     ),
@@ -425,16 +445,15 @@ it("uses comment candidates in the production Codex service and removes the dupl
 
 it("runs semantic checking in its own isolated model call and rejects fabricated speech evidence", async () => {
   const transcript = "Герой пытается доказать свою правоту в споре о новой игре.";
-  const commands: ChildProcess.StandardCommand[] = [];
+  const requests: ModelRequest[] = [];
   let quote = transcript;
   const layer = CommentTopics.layer.pipe(
     Layer.provide(
-      spawnerLayer((command) => {
-        commands.push(command);
-        expect(command.args).toContain("--ignore-rules");
-        expect(command.args).toContain('web_search="disabled"');
-        expect(command.args).toContain("gpt-6.1-sol");
-        expect(command.args).toContain('model_reasoning_effort="medium"');
+      modelLayer((request) => {
+        requests.push(request);
+        expect(request.webSearch).toBeFalsy();
+        expect(request.model).toBe("gpt-6.1-sol");
+        expect(request.effort).toBe("medium");
         return {
           value: {
             supported: true,
@@ -459,7 +478,7 @@ it("runs semantic checking in its own isolated model call and rejects fabricated
       ).pipe(Effect.provide(layer)),
     ),
   ).toMatchObject({ supported: false, claims: [] });
-  expect(new Set(commands.map((command) => command.options.cwd)).size).toBe(2);
+  expect(requests).toHaveLength(2);
 });
 
 it("the production pipeline regenerates a rejected meaning without re-extracting nicknames", async () => {
@@ -490,7 +509,7 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
   ];
   let calls = 0;
   let reads = 0;
-  const layer = CodexTopics.layer.pipe(
+  const layer = TopicService.layer.pipe(
     Layer.provide(
       Layer.succeed(
         VideoTagGenerator,
@@ -516,7 +535,7 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
         ),
       ),
     ),
-    Layer.provide(spawnerLayer(() => ({ value: responses[calls++] }))),
+    Layer.provide(modelLayer(() => ({ value: responses[calls++] }))),
     Layer.provide(
       Layer.succeed(
         ThumbnailQuotes,
@@ -527,7 +546,7 @@ it("the production pipeline regenerates a rejected meaning without re-extracting
   );
   expect(
     await Effect.runPromise(
-      CodexTopics.use((service) => service.summarize(transcript, source)).pipe(
+      TopicService.use((service) => service.summarize(transcript, source)).pipe(
         Effect.provide(layer),
       ),
     ),

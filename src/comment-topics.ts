@@ -1,7 +1,7 @@
 import { Config, Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt, safeMessage } from "./core.ts";
 import { topicTitle, validateTopic } from "./topic.ts";
-import { codexSettings, isolatedModel } from "./commands.ts";
+import { isolatedModel, topicModel } from "./model.ts";
 import { reviewPrompt, TopicReview, validateReview } from "./topic-review.ts";
 import { titleStyle } from "./title-style.ts";
 import { sameTitleName, titleNameForms } from "./person-name.ts";
@@ -283,7 +283,7 @@ export class CommentTopics extends Context.Service<
   static readonly layer = Layer.effect(
     CommentTopics,
     Effect.gen(function* () {
-      const { model } = yield* codexSettings;
+      const model = yield* topicModel;
       const run = yield* isolatedModel;
       const extractModel = yield* Config.String("TOPIC_EXTRACT_MODEL").pipe(
         Config.withDefault("gpt-6.1-sol"),

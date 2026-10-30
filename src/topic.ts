@@ -96,7 +96,7 @@ export class Topics extends Context.Service<
           message: "TOPICS_URL must be a local loopback HTTP endpoint",
         });
       const summarize = (text: string, source: TopicSource) =>
-        attempt("Generate a video topic through Codex", async (signal) => {
+        attempt("Generate a video topic through the topic service", async (signal) => {
           if (!endpoint) throw new Error("Set TOPICS_URL to enable topic generation");
           const body = Schema.decodeUnknownSync(TopicRequest)({ text, source });
           const response = await fetch(`${endpoint.replace(/\/$/, "")}/topic`, {
@@ -111,7 +111,7 @@ export class Topics extends Context.Service<
           });
           if (!response.ok) {
             await response.body?.cancel();
-            throw new Error(`Codex topic service HTTP ${response.status}`);
+            throw new Error(`Topic service HTTP ${response.status}`);
           }
           const result = Schema.decodeUnknownSync(GeneratedTopic)(await response.json());
           return {

@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, ManagedRuntime, Schema } from "effect";
-import { CodexTopics } from "./codex.ts";
+import { TopicService } from "./topic-service.ts";
+import { ModelProxy } from "./model.ts";
 import { CommentTopics } from "./comment-topics.ts";
 import { TelegramComments } from "./telegram-comments.ts";
 import { AppError } from "./core.ts";
@@ -10,7 +11,7 @@ import { ThumbnailQuotes } from "./thumbnail-quote.ts";
 import { VideoTagGenerator } from "./video-tags.ts";
 
 const runtime = ManagedRuntime.make(
-  CodexTopics.layer.pipe(
+  TopicService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         CommentTopics.layer,
@@ -19,6 +20,7 @@ const runtime = ManagedRuntime.make(
         VideoTagGenerator.layer,
       ),
     ),
+    Layer.provide(ModelProxy.layer),
     Layer.provide(BunServices.layer),
   ),
 );
@@ -28,7 +30,7 @@ async function generateTopic(body: typeof TopicRequest.Type) {
   busy = true;
   try {
     const result = await runtime.runPromise(
-      CodexTopics.use((service) => service.summarize(body.text, body.source)),
+      TopicService.use((service) => service.summarize(body.text, body.source)),
     );
     return Response.json(result);
   } catch (cause) {
@@ -36,7 +38,7 @@ async function generateTopic(body: typeof TopicRequest.Type) {
       "Topic failed:",
       cause instanceof AppError ? cause.message.split(":")[0] : "Unexpected runtime failure",
     );
-    return new Response("Codex topic generation failed", { status: 502 });
+    return new Response("Topic generation failed", { status: 502 });
   } finally {
     busy = false;
   }
@@ -54,7 +56,7 @@ async function acceptTranscript(request: Request) {
 const routes: Record<string, (request: Request) => Promise<Response>> = {
   "GET /health": async () => {
     const model = await runtime.runPromise(
-      CodexTopics.use((service) => Effect.succeed(service.model)),
+      TopicService.use((service) => Effect.succeed(service.model)),
     );
     return Response.json({ ready: true, model });
   },
@@ -78,4 +80,4 @@ const shutdown = async () => {
 };
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-console.log("Codex topic service listening on 127.0.0.1:11435");
+console.log("Topic service listening on 127.0.0.1:11435");
