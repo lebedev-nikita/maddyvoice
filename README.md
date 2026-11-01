@@ -16,7 +16,7 @@ existing uploads and resumable upload files are preserved.
 
 ## Install
 
-Requires Bun 1.4.4+, FFmpeg/FFprobe and macOS ARM64 or Linux x64/ARM64 with
+Requires Bun 1.4.4+, FFmpeg/FFprobe 6.1+ and macOS ARM64 or Linux x64/ARM64 with
 glibc 2.35+. BoxDB's native client is bundled; no database server is needed.
 
 ```sh
@@ -336,7 +336,7 @@ bun scripts/+render-thumbnails.ts --quotes data/thumbnail-quotes/quotes.json --o
 The first command uses the production quote generator and independent review,
 saving each approved result and input/prompt hashes. It sends no expected answer
 to the model. The second renders 1280×720 PNGs with FFmpeg and the bundled Oswald
-font, without a browser. FFmpeg needs `drawtext` and `geq`; select a suitable build
+font, without a browser. FFmpeg 6.1+ needs `drawtext` and `geq`; select a suitable build
 with `FFMPEG_PATH`. Rendering is sequential and limits FFmpeg to two threads.
 These commands create local files. To update an explicit batch of existing videos,
 run `bun run thumbnail:apply --manifest data/thumbnail-batch/manifest.json`.

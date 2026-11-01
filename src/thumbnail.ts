@@ -46,10 +46,13 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
       await writeFile(join(work, `line-${index}.txt`), line, { mode: 0o600 });
     await writeFile(join(work, "brand.txt"), "MADDYVOICE", { mode: 0o600 });
   });
+  // Font metrics keep line spacing even when a line lacks ascenders; requires FFmpeg 6.1.
+  // Oswald's ascent sits above its capitals, so lift lines to align capitals with the layout.
+  const capitalOffset = Math.round(fontSize * 0.36);
   const text = lines.map(
     (_, index) =>
       `drawtext=fontfile=font.ttf:textfile=line-${index}.txt:expansion=none:` +
-      `fontcolor=0x1b1f1a:fontsize=${fontSize}:x=64:y=${top + index * lineHeight}`,
+      `fontcolor=0x1b1f1a:fontsize=${fontSize}:x=64:y=${top - capitalOffset + index * lineHeight}:y_align=font`,
   );
   // A light card fades into the portrait; a short olive rule marks the quote.
   const filter =
@@ -88,7 +91,7 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
       Effect.mapError(
         () =>
           new AppError({
-            message: "Thumbnail render failed; FFmpeg must include drawtext and geq filters",
+            message: "Thumbnail render failed; requires FFmpeg 6.1+ with drawtext and geq filters",
           }),
       ),
     );
@@ -98,7 +101,7 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
   ).pipe(Effect.mapError(() => new AppError({ message: "Cannot read thumbnail FFmpeg output" })));
   if (Number(code) !== 0)
     return yield* new AppError({
-      message: `Thumbnail FFmpeg exited ${code}; requires drawtext and geq: ${output.slice(-1000)}`,
+      message: `Thumbnail FFmpeg exited ${code}; requires FFmpeg 6.1+ with drawtext and geq: ${output.slice(-1000)}`,
     });
   yield* attempt("Save thumbnail", async () => {
     await mkdir(dirname(destination), { recursive: true });

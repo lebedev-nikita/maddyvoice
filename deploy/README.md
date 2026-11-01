@@ -26,6 +26,7 @@ Both run TypeScript source directly with the pinned Bun in
 | `/var/lib/maddyvoice`                     | Private BoxDB state, authorization and rendered videos |
 | `/var/lib/maddyvoice-topics`              | Private topic service state                            |
 | `/etc/systemd/system/maddyvoice*.service` | Installed copies of both service units                 |
+| `/opt/ffmpeg`                             | Static ARM64 FFmpeg 9.0 build used by the publisher    |
 
 Data stays on the system disk's ext4 filesystem. The external exFAT media disk
 is not used for database files or credentials. The service runs under its own
@@ -35,7 +36,7 @@ are mode `0600`.
 ## Deploy an update
 
 This procedure assumes the Pi is already provisioned with the SSH alias
-`pibox`, sudo access, FFmpeg, pinned Bun and `tg`, working YouTube and Telegram
+`pibox`, sudo access, FFmpeg in `/opt/ffmpeg`, pinned Bun and `tg`, working YouTube and Telegram
 authorization, a running CLIProxyAPI with a Codex login, and its client key in
 `/etc/maddyvoice-topics.env`. It
 updates application code without replacing runtime data.
@@ -115,6 +116,34 @@ below. Existing YouTube publication dates cannot be reordered by a code update.
    If a migration or readiness check fails, leave the publisher stopped and
    inspect the error before continuing. Verify both services and recent logs
    with the commands below. Check publication and title errors in CLI `status`.
+
+## Install FFmpeg
+
+Thumbnails need FFmpeg 6.1+, and Debian bookworm ships 5.1. The publisher uses
+a checksum-verified [BtbN](https://github.com/BtbN/FFmpeg-Builds) ARM64 GPL build
+instead; the system package stays installed for other software. On the Pi:
+
+```sh
+cd "$(mktemp -d)"
+ffmpeg_url=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest
+curl -fsSLO "$ffmpeg_url/ffmpeg-n9.0-latest-linuxarm64-gpl-9.0.tar.xz"
+curl -fsSLO "$ffmpeg_url/checksums.sha256"
+grep ' ffmpeg-n9.0-latest-linuxarm64-gpl-9.0.tar.xz$' checksums.sha256 | sha256sum -c -
+tar -xf ffmpeg-n9.0-latest-linuxarm64-gpl-9.0.tar.xz
+ffmpeg_build="$(basename ffmpeg-n9.0-*/)"
+sudo mv "$ffmpeg_build" "/opt/$ffmpeg_build-$(date +%Y%m%d)"
+sudo ln -sfn "/opt/$ffmpeg_build-$(date +%Y%m%d)" /opt/ffmpeg
+```
+
+`/etc/maddyvoice.env` selects it:
+
+```dotenv
+FFMPEG_PATH=/opt/ffmpeg/bin/ffmpeg
+FFPROBE_PATH=/opt/ffmpeg/bin/ffprobe
+```
+
+Restart the publisher after changing the build. To roll back, point the
+`/opt/ffmpeg` link at the previous build.
 
 ## Operate
 
