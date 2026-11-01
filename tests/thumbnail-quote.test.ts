@@ -108,8 +108,8 @@ it("fails closed on repeated invalid drafts and propagates model failures withou
 });
 
 it("wraps text without dropping words or evaluating FFmpeg expansions", () => {
-  expect(thumbnailLines("Вы просто супер.").join(" ")).toBe("ВЫ ПРОСТО СУПЕР");
-  expect(thumbnailLines("Это 100%: %{n}!").join(" ")).toBe("ЭТО 100%: %{N}");
+  expect(thumbnailLines("Вы просто супер.").join(" ")).toBe("Вы просто супер");
+  expect(thumbnailLines("Это 100%: %{n}!").join(" ")).toBe("Это 100%: %{n}");
 });
 
 it.each([
@@ -130,5 +130,5 @@ it.each([
   ["Без пунктуации", "Без пунктуации"],
 ])("formats the thumbnail ending while preserving the excerpt: %s", (quote, expected) => {
   expect(thumbnailText(quote)).toBe(expected);
-  expect(thumbnailLines(quote).join(" ")).toBe(expected.toLocaleUpperCase("ru-RU"));
+  expect(thumbnailLines(quote).join(" ")).toBe(expected);
 });
