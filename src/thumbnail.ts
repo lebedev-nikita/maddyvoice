@@ -5,8 +5,41 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { AppError, attempt, Paths } from "./core.ts";
 
+// YouTube rejects thumbnails with Russian obscenities. Each pattern captures the root;
+// the offset names the root letter replaced by a star.
+const obscenities: readonly (readonly [RegExp, number])[] = [
+  [/(п[ие]зд)/du, 1],
+  [/(?<!стра)(ху[йеёяюи])/du, 1],
+  [/^(ху)(?:ли|ль)$/du, 1],
+  [/^(бля)(?!х)/du, 2],
+  [/^(?:за|вы|у|по|на|до|при|про|пере|недо|долбо|съ|отъ|разъ|подъ|объ|въ|изъ|взъ)?([её]б)/du, 1],
+  [/^(муд)(?:а[кч]|ил|о[зх])/du, 1],
+  [/^(су[кч])(?:а|и|е|у|ой|ам|ами|ах|ин[а-яё]*|к[а-яё]*|ар[а-яё]*|ий|ье|ьё)$/du, 1],
+  [/^(пид[оа]?р)/du, 1],
+  [/(залуп)/du, 3],
+  [/(г[ао]ндон)/du, 1],
+  [/(шлюх)/du, 2],
+  [/^(?:по|на|за|от|вы|об)?(дроч)/du, 2],
+  [/^(манд)(?:а|ы|е|у|ой)$/du, 1],
+];
+
+export function maskObscenities(text: string) {
+  return text.replace(/[а-яё]+/giu, (word) => {
+    const lower = word.toLowerCase();
+    for (const [pattern, offset] of obscenities) {
+      const root = pattern.exec(lower)?.indices?.[1];
+      if (!root) continue;
+      const index = root[0] + offset;
+      return `${word.slice(0, index)}*${word.slice(index + 1)}`;
+    }
+    return word;
+  });
+}
+
 export function thumbnailText(quote: string) {
-  return quote.trim().replace(/[.,:;!?…—–\s-]+$/u, (ending) => (ending.includes("?") ? "?" : ""));
+  return maskObscenities(
+    quote.trim().replace(/[.,:;!?…—–\s-]+$/u, (ending) => (ending.includes("?") ? "?" : "")),
+  );
 }
 
 export function thumbnailLines(quote: string) {

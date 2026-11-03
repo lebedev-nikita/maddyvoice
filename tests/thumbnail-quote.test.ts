@@ -8,7 +8,7 @@ import {
   validateThumbnailQuote,
   validateThumbnailReview,
 } from "../src/thumbnail-quote.ts";
-import { thumbnailLines, thumbnailText } from "../src/thumbnail.ts";
+import { maskObscenities, thumbnailLines, thumbnailText } from "../src/thumbnail.ts";
 
 const transcript = "Вы просто супер. Я просто в шоке, на самом деле. Спасибо вам большое.";
 
@@ -131,4 +131,29 @@ it.each([
 ])("formats the thumbnail ending while preserving the excerpt: %s", (quote, expected) => {
   expect(thumbnailText(quote)).toBe(expected);
   expect(thumbnailLines(quote).join(" ")).toBe(expected);
+});
+
+it.each([
+  ["Я пиздеть не буду,", "Я п*здеть не буду"],
+  ["Ну нахуй", "Ну нах*й"],
+  ["Охуенно!", "Ох*енно"],
+  ["Хули ты", "Х*ли ты"],
+  ["Блядь, опять", "Бл*дь, опять"],
+  ["Ебать копать", "Е*ать копать"],
+  ["Заебал уже", "Зае*ал уже"],
+  ["Долбоёб", "Долбоё*"],
+  ["Распиздяй", "Расп*здяй"],
+  ["Сука", "С*ка"],
+  ["Мудак", "М*дак"],
+  ["Пидорас", "П*дорас"],
+  ["Надрочил", "Надр*чил"],
+])("stars obscenities in the thumbnail text: %s", (quote, expected) => {
+  expect(thumbnailText(quote)).toBe(expected);
+  expect(thumbnailText(expected)).toBe(expected);
+});
+
+it("keeps ordinary words that resemble obscenities", () => {
+  const text =
+    "Себе небо хлеб ребёнок сабля рубля бляха страхуй хулиган художник хуже сукно сучок мудрый мандарин";
+  expect(maskObscenities(text)).toBe(text);
 });
