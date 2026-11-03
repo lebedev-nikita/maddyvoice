@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -234,14 +234,16 @@ export class Media extends Context.Service<
             join(work, `frame-${index}.png`),
           ]);
         }
-        const slides = pictures.map(
-          (_, index) =>
-            `file 'frame-${index}.png'\nduration ${(duration / pictures.length).toFixed(9)}`,
+        // Repeat each still frame on demand: a concat demuxer slideshow makes fps
+        // burst-duplicate full-size frames that FFmpeg then holds in memory.
+        const fps = Waveform.fps;
+        const starts = pictures.map((_, index) =>
+          Math.round(((index * duration) / pictures.length) * fps),
         );
-        slides.push(`file 'frame-${pictures.length - 1}.png'`);
-        yield* attempt("Write slideshow", () =>
-          writeFile(join(work, "slides.ffconcat"), `ffconcat version 1.0\n${slides.join("\n")}\n`),
-        );
+        const slides = pictures.map((_, index) => {
+          const frames = index + 1 < pictures.length ? starts[index + 1]! - starts[index]! : 0;
+          return `[${index}:v]loop=loop=${frames - 1}:size=1[slide${index}];`;
+        });
         const temporary = join(work, "video.mp4");
         yield* execute(
           config.ffmpeg,
@@ -252,12 +254,7 @@ export class Media extends Context.Service<
             "-y",
             "-filter_complex_threads",
             "1",
-            "-f",
-            "concat",
-            "-safe",
-            "1",
-            "-i",
-            join(work, "slides.ffconcat"),
+            ...pictures.flatMap((_, index) => ["-i", join(work, `frame-${index}.png`)]),
             "-i",
             audioPath,
             "-f",
@@ -267,21 +264,23 @@ export class Media extends Context.Service<
             "-video_size",
             `${Waveform.width}x${Waveform.height}`,
             "-framerate",
-            String(Waveform.fps),
+            String(fps),
             "-i",
             "pipe:0",
             "-map",
             "[video]",
             "-map",
-            "1:a:0",
+            `${pictures.length}:a:0`,
             "-filter_complex",
-            `[0:v]fps=${Waveform.fps},tpad=stop_mode=clone:stop_duration=${duration},format=rgba[slides];` +
-              `[slides][2:v]overlay=${Waveform.left}:${Waveform.top}:shortest=1:format=auto,` +
+            slides.join("") +
+              `${pictures.map((_, index) => `[slide${index}]`).join("")}` +
+              `concat=n=${pictures.length}:v=1:a=0,settb=1/${fps},setpts=N,fps=${fps},format=rgba[slides];` +
+              `[slides][${pictures.length + 1}:v]overlay=${Waveform.left}:${Waveform.top}:shortest=1:format=auto,` +
               "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[video]",
             "-t",
             String(duration),
             "-r",
-            String(Waveform.fps),
+            String(fps),
             "-c:v",
             "libx264",
             "-preset",
