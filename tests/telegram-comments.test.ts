@@ -81,6 +81,7 @@ function spawnerLayer(
   ) => {
     value: unknown;
     code?: number;
+    stderr?: string;
     delay?: number;
     onExit?: () => void;
   },
@@ -94,7 +95,7 @@ function spawnerLayer(
         const prompt = Stream.isStream(input)
           ? yield* input.pipe(Stream.decodeText(), Stream.mkString, Effect.orDie)
           : "";
-        const { value, code = 0, delay = 0, onExit } = reply(command, prompt);
+        const { value, code = 0, stderr = "", delay = 0, onExit } = reply(command, prompt);
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.gen(function* () {
@@ -106,7 +107,7 @@ function spawnerLayer(
           kill: () => Effect.void,
           stdin: Sink.drain,
           stdout: Stream.make(new TextEncoder().encode(JSON.stringify(value))),
-          stderr: Stream.empty,
+          stderr: Stream.make(new TextEncoder().encode(stderr)),
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
@@ -244,6 +245,26 @@ it("retries failed Telegram reads instead of treating rate limits as an empty di
       TelegramComments.use((service) => service.read(source)).pipe(Effect.provide(reader)),
     ),
   ).rejects.toThrow("tg exited 8");
+});
+
+it("titles a post deleted from Telegram without comments, but keeps other tg errors retryable", async () => {
+  const failing = (reason: string) =>
+    TelegramComments.layer.pipe(
+      Layer.provide(
+        spawnerLayer(() => ({
+          value: "",
+          code: 6,
+          stderr: `keyring warning\n{"error":{"code":"x","reason":"${reason}","message":"m"}}\n`,
+        })),
+      ),
+      Layer.provide(config),
+    );
+  const read = (reason: string) =>
+    Effect.runPromise(
+      TelegramComments.use((service) => service.read(source)).pipe(Effect.provide(failing(reason))),
+    );
+  expect(await read("item.not-found")).toEqual([]);
+  await expect(read("rate.limited")).rejects.toThrow("tg exited 6 (rate.limited)");
 });
 
 it("processes 500 bodies in isolated batches and combines weak mentions across batches", async () => {

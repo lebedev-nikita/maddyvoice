@@ -1,9 +1,9 @@
-import { Config, Context, DateTime, Effect, Layer, Schema } from "effect";
+import { Config, Context, DateTime, Effect, Layer, Option, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { AppError, attempt } from "./core.ts";
 import { commentBodies, type CommentBody } from "./comment-topics.ts";
 import { commentsReadyAt, type TopicSource } from "./topic.ts";
-import { commandJson } from "./commands.ts";
+import { commandJson, CommandFailure } from "./commands.ts";
 
 const MessageId = Schema.String.check(Schema.isPattern(/^[1-9]\d*$/));
 const Page = Schema.Struct({
@@ -78,7 +78,13 @@ export class TelegramComments extends Context.Service<
             "45s",
           ]),
           "tg",
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError((error) =>
+            error instanceof CommandFailure ? error : new AppError({ message: error.message }),
+          ),
+        );
+      const fail = (error: CommandFailure) => new AppError({ message: error.message });
       const read = Effect.fn("TelegramComments.read")(function* (source: TopicSource) {
         if (source.channel !== channel)
           return yield* new AppError({ message: "Comment source does not match TELEGRAM_CHANNEL" });
@@ -88,15 +94,30 @@ export class TelegramComments extends Context.Service<
         );
         if (now < readyAt)
           return yield* new AppError({ message: "Telegram post is less than one hour old" });
-        const raw = yield* run([
+        const shown = yield* run([
           "messages",
           "show",
           `@${source.channel}`,
           source.messageId,
           "--json=id,timestamp,provider_metadata",
-        ]);
+        ]).pipe(
+          Effect.map(Option.some),
+          Effect.catchTag("CommandFailure", (error) =>
+            error.reason === "item.not-found"
+              ? Effect.succeed(Option.none())
+              : Effect.fail(fail(error)),
+          ),
+        );
+        // The author deleted the post after it was archived: its discussion is gone too,
+        // so the title comes from the recording alone.
+        if (Option.isNone(shown)) {
+          yield* Effect.logWarning(
+            `Telegram post #${source.messageId} was deleted; generating its title without comments`,
+          );
+          return [];
+        }
         const post = yield* attempt("Validate source Telegram post", async () =>
-          Schema.decodeUnknownSync(Post)(raw),
+          Schema.decodeUnknownSync(Post)(shown.value),
         );
         const sameTime = yield* attempt(
           "Verify original publication time",
@@ -121,7 +142,9 @@ export class TelegramComments extends Context.Service<
             "100",
             "--json=id,text",
             ...(before ? ["--cursor", `before:${before}`] : []),
-          ]),
+          ]).pipe(
+            Effect.mapError((error) => (error instanceof CommandFailure ? fail(error) : error)),
+          ),
         );
       });
       return TelegramComments.of({ read });
