@@ -27,6 +27,7 @@ Both run TypeScript source directly with the pinned Bun in
 | `/var/lib/maddyvoice-topics`              | Private topic service state                            |
 | `/etc/systemd/system/maddyvoice*.service` | Installed copies of both service units                 |
 | `/opt/ffmpeg`                             | Static ARM64 FFmpeg 9.0 build used by the publisher    |
+| `/usr/bin/chromium`                       | Debian Chromium that renders the video's post card     |
 
 Data stays on the system disk's ext4 filesystem. The external exFAT media disk
 is not used for database files or credentials. The service runs under its own
@@ -36,7 +37,7 @@ are mode `0600`.
 ## Deploy an update
 
 This procedure assumes the Pi is already provisioned with the SSH alias
-`pibox`, sudo access, FFmpeg in `/opt/ffmpeg`, pinned Bun and `tg`, working YouTube and Telegram
+`pibox`, sudo access, FFmpeg in `/opt/ffmpeg`, Chromium, pinned Bun and `tg`, working YouTube and Telegram
 authorization, a running CLIProxyAPI with a Codex login, and its client key in
 `/etc/maddyvoice-topics.env`. It
 updates application code without replacing runtime data.
@@ -144,6 +145,21 @@ FFPROBE_PATH=/opt/ffmpeg/bin/ffprobe
 
 Restart the publisher after changing the build. To roll back, point the
 `/opt/ffmpeg` link at the previous build.
+
+## Install Chromium
+
+The publisher renders each video's Telegram-style post card once with headless
+Chromium, then animates it with FFmpeg. Install Debian's package on the Pi:
+
+```sh
+sudo apt-get install -y chromium
+```
+
+It is found on `PATH`; set `CHROMIUM_PATH` in `/etc/maddyvoice.env` to use a
+different binary. Chromium runs inside the service's sandbox with a temporary
+profile in the render workspace and needs no display. The card downloads the
+channel avatar from Telegram and reaction emoji from `cdn.jsdelivr.net`, falling
+back to Telegram's smaller emoji images.
 
 ## Operate
 

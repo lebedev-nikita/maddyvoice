@@ -107,6 +107,7 @@ async function fixture(client = new Client(), metadataReady = true) {
       privacy: "private",
       ffmpeg: "ffmpeg",
       ffprobe: "ffprobe",
+      chromium: "chromium",
       expectedChannel: "",
     }),
   );

@@ -1,4 +1,5 @@
 import { Config, Context, Effect, Layer, Schema } from "effect";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +22,8 @@ export const Paths = {
   portrait: fileURLToPath(new URL("../assets/ilya-maddyson.jpg", import.meta.url)),
   videoOverlay: fileURLToPath(new URL("../assets/video-overlay.png", import.meta.url)),
   thumbnailFont: fileURLToPath(new URL("../assets/fonts/Oswald-Bold.ttf", import.meta.url)),
+  cardFont: fileURLToPath(new URL("../assets/fonts/Roboto.ttf", import.meta.url)),
+  backgrounds: fileURLToPath(new URL("../assets/backgrounds", import.meta.url)),
   migrations: fileURLToPath(new URL("../db/migrations", import.meta.url)),
   topicSchema: fileURLToPath(new URL("../assets/topic.schema.json", import.meta.url)),
   people: fileURLToPath(new URL("../assets/people.json", import.meta.url)),
@@ -35,6 +38,7 @@ export class Settings extends Context.Service<
     readonly privacy: "public" | "private" | "unlisted";
     readonly ffmpeg: string;
     readonly ffprobe: string;
+    readonly chromium: string;
     readonly expectedChannel: string;
   }
 >()("maddyvoice/Settings") {
@@ -49,6 +53,9 @@ export class Settings extends Context.Service<
       const privacy = yield* Config.String("YOUTUBE_PRIVACY").pipe(Config.withDefault("public"));
       const ffmpeg = yield* Config.String("FFMPEG_PATH").pipe(Config.withDefault("ffmpeg"));
       const ffprobe = yield* Config.String("FFPROBE_PATH").pipe(Config.withDefault("ffprobe"));
+      const chromium = yield* Config.String("CHROMIUM_PATH").pipe(
+        Config.withDefault(defaultChromium()),
+      );
       const expectedChannel = yield* Config.String("YOUTUBE_CHANNEL_ID").pipe(
         Config.withDefault(""),
       );
@@ -72,9 +79,19 @@ export class Settings extends Context.Service<
         privacy,
         ffmpeg,
         ffprobe,
+        chromium,
         expectedChannel,
       });
     }),
+  );
+}
+
+/** Chromium or Chrome from PATH, else the macOS application bundle. */
+export function defaultChromium(): string {
+  const mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  return (
+    ["chromium", "chromium-browser", "google-chrome"].find((name) => Bun.which(name)) ??
+    (existsSync(mac) ? mac : "chromium")
   );
 }
 

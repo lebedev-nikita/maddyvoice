@@ -6,10 +6,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
-import { Settings } from "../src/core.ts";
+import { defaultChromium, Settings } from "../src/core.ts";
 import { Media } from "../src/media.ts";
 import { Thumbnails } from "../src/thumbnail.ts";
-import { Waveform } from "../src/waveform.ts";
 
 const exec = promisify(execFile);
 const directory = await mkdtemp(join(tmpdir(), "maddyvoice-media-smoke-"));
@@ -49,17 +48,22 @@ try {
       path,
     ]);
   }
+  const emoji = "https://cdn.jsdelivr.net/npm/emoji-datasource-apple@16.0.0/img/apple/64/1f525.png";
   const bytes = new Map([
     ["https://cdn4.telesco.pe/audio", await readFile(audio)],
     ["https://cdn4.cdn-telegram.org/red", await readFile(red)],
     ["https://cdn4.cdn-telegram.org/blue", await readFile(blue)],
+    ["https://cdn4.telesco.pe/avatar", await readFile(red)],
+    [emoji, await readFile(blue)],
   ]);
   const fakeFetch = Object.assign(
-    async (input: string | URL | Request) => {
+    async (input: string | URL | Request, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : input.toString();
+      // Chromium's DevTools endpoint stays real.
+      if (url.startsWith("http://127.0.0.1:")) return originalFetch(input, init);
       const data = bytes.get(url);
       assert(data, `Unexpected request ${url}`);
-      return new Response(data);
+      return new Response(data, { headers: { "content-type": "image/png" } });
     },
     { preconnect: originalFetch.preconnect },
   );
@@ -73,26 +77,45 @@ try {
       privacy: "private",
       ffmpeg,
       ffprobe: "ffprobe",
+      chromium: process.env.CHROMIUM_PATH ?? defaultChromium(),
       expectedChannel: "",
     }),
   );
   const media = Media.layer.pipe(Layer.provide(settings), Layer.provide(BunServices.layer));
-  const output = await Effect.runPromise(
-    Effect.gen(function* () {
-      return yield* (yield* Media).render(
-        {
-          id: 1,
-          date: "2026-10-26T01:02:03.000Z",
-          text: "",
-          forwarded: false,
-          url: "https://t.me/maddysontg/1",
-          audio: ["https://cdn4.telesco.pe/audio"],
-          images: ["https://cdn4.cdn-telegram.org/red", "https://cdn4.cdn-telegram.org/blue"],
-        },
-        0,
-        "slideshow",
-      );
-    }).pipe(Effect.provide(media)),
+  const card = {
+    author: "Канал",
+    avatar: "https://cdn4.telesco.pe/avatar",
+    views: "12.3K",
+    edited: false,
+    reactions: [
+      {
+        emoji: "🔥",
+        image: "//telegram.org/img/emoji/40/F09F94A5.png",
+        count: "1.2K",
+        paid: false,
+      },
+      { emoji: "", image: "", count: "5", paid: true },
+    ],
+    waveforms: [Array.from({ length: 100 }, (_, index) => (index * 7) % 32)],
+  };
+  const render = (post: Parameters<Media["Service"]["render"]>[0], key: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* (yield* Media).render(post, 0, key);
+      }).pipe(Effect.provide(media)),
+    );
+  const output = await render(
+    {
+      id: 1,
+      date: "2026-10-26T01:02:03.000Z",
+      text: "Короткий текст",
+      forwarded: false,
+      url: "https://t.me/maddysontg/1",
+      audio: ["https://cdn4.telesco.pe/audio"],
+      images: ["https://cdn4.cdn-telegram.org/red", "https://cdn4.cdn-telegram.org/blue"],
+      card,
+    },
+    "slideshow",
   );
   for (const [time, dominant] of [
     ["0.3", 0],
@@ -112,12 +135,12 @@ try {
         "-frames:v",
         "1",
         "-vf",
-        "crop=1:1:960:540,format=rgb24",
+        "crop=1:1:400:540,format=rgb24",
         "-f",
         "rawvideo",
         "pipe:1",
       ],
-      { encoding: "buffer" },
+      { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 },
     );
     assert(
       (stdout[dominant] ?? 0) > 150,
@@ -174,7 +197,7 @@ try {
         "rawvideo",
         "pipe:1",
       ],
-      { encoding: "buffer" },
+      { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 },
     );
     return result.stdout;
   };
@@ -185,27 +208,64 @@ try {
     logo.every((channel) => channel > 180),
     "YouTube branding must be visible",
   );
-  const pulsePosition = async (time: number) => {
-    const frame = await pixels(
-      time,
-      `${Waveform.width}:${Waveform.height}:${Waveform.left}:${Waveform.top}`,
-    );
-    let weight = 0;
-    let position = 0;
-    for (let pixel = 0; pixel < frame.length / 3; pixel++) {
-      const y = Math.floor(pixel / Waveform.width);
-      if (Math.abs(y - 48) < 8 || frame[pixel * 3 + 2]! < 145) continue;
-      weight++;
-      position += pixel % Waveform.width;
+  // The card sits right of x=896; count its white bubble and blue (played) waveform pixels.
+  const cardPixels = async (time: number) => {
+    const frame = await pixels(time, "988:1040:896:20");
+    let white = 0;
+    let blue = 0;
+    for (let offset = 0; offset < frame.length; offset += 3) {
+      const [r = 0, g = 0, b = 0] = frame.subarray(offset, offset + 3);
+      if (Math.min(r, g, b) > 245) white++;
+      if (Math.hypot(r - 64, g - 167, b - 227) < 30) blue++;
     }
-    assert(weight > 100, "Voice pulse must produce visible tall bars");
-    return position / weight;
+    return { white, blue };
   };
-  const before = await pulsePosition(0.95);
-  const after = await pulsePosition(1.2);
+  const early = await cardPixels(0.2);
+  const late = await cardPixels(3.8);
+  assert(early.white > 100_000, `Post card must be visible: ${early.white} white pixels`);
   assert(
-    Math.abs(after - before + 48) < 6,
-    `Voice history moved incorrectly: ${before} -> ${after}`,
+    late.blue > early.blue + 5_000,
+    `Waveform progress must advance: ${early.blue} -> ${late.blue} blue pixels`,
+  );
+  const long = await render(
+    {
+      id: 2,
+      date: "2026-10-26T01:02:03.000Z",
+      text: Array.from({ length: 12 }, () => "Очень длинный абзац текста. ".repeat(20)).join(
+        "\n\n",
+      ),
+      forwarded: false,
+      url: "https://t.me/maddysontg/2",
+      audio: ["https://cdn4.telesco.pe/audio"],
+      images: [],
+      card,
+    },
+    "long",
+  );
+  const background = await exec(
+    ffmpeg,
+    [
+      "-nostdin",
+      "-v",
+      "error",
+      "-ss",
+      "1",
+      "-i",
+      long.path,
+      "-frames:v",
+      "1",
+      "-vf",
+      "format=rgb24,crop=1:1:400:300",
+      "-f",
+      "rawvideo",
+      "pipe:1",
+    ],
+    { encoding: "buffer", maxBuffer: 16 * 1024 * 1024 },
+  );
+  const [r, g, b] = background.stdout;
+  assert(
+    !(r! > 150 && g! < 80 && b! < 80) && !(b! > 150 && r! < 80 && g! < 80),
+    "A post without photos must use a rotating background",
   );
   const thumbnail = await Effect.runPromise(
     Effect.gen(function* () {
@@ -220,7 +280,7 @@ try {
   assert.equal(image.readUInt32BE(16), 1280);
   assert.equal(image.readUInt32BE(20), 720);
   console.log(
-    "Media smoke passed: full-frame slides, branding, right-to-left voice history, H.264 1080p60 + AAC, full duration, quote thumbnail",
+    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, H.264 1080p60 + AAC, full duration, quote thumbnail",
   );
 } finally {
   globalThis.fetch = originalFetch;

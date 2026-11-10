@@ -45,6 +45,7 @@ async function fixture(
       privacy: "private",
       ffmpeg: "ffmpeg",
       ffprobe: "ffprobe",
+      chromium: "chromium",
       expectedChannel: "",
     }),
   );

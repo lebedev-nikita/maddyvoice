@@ -9,6 +9,9 @@ jobs:
         with:
           bun-version: 1.4.4
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # The media smoke test renders the post card with the runner's Google Chrome,
+      # whose sandbox needs unprivileged user namespaces.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bunx tsgo --noEmit
