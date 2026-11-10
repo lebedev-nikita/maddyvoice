@@ -32,6 +32,35 @@ describe("public Telegram feed", () => {
     });
   });
 
+  it("reads the post card: author, avatar, views, edits, reactions and voice waveforms", () => {
+    const page = parsePage(
+      message(`
+      <div class="tgme_widget_message_user_photo"><img src="https://cdn4.telesco.pe/file/avatar.jpg"></div>
+      <a class="tgme_widget_message_owner_name"><span>Канал</span></a>
+      <div class="tgme_widget_message_voice_player">
+        <audio class="tgme_widget_message_voice" src="https://cdn4.telesco.pe/a.ogg" data-waveform="0,31,7"></audio>
+      </div>
+      <div class="tgme_widget_message_reactions">
+        <span class="tgme_reaction tgme_reaction_paid"><i class="emoji"></i>5</span>
+        <span class="tgme_reaction"><i class="emoji" style="background-image:url('//telegram.org/img/emoji/40/E29DA4.png')"><b>❤</b></i>2.1K</span>
+      </div>
+      <span class="tgme_widget_message_views">40K</span>
+      <span class="tgme_widget_message_meta">edited <a class="tgme_widget_message_date"><time datetime="2026-10-26T02:05:50+00:00">02:05</time></a></span>`),
+      "maddysontg",
+    );
+    expect(page.posts[0]?.card).toEqual({
+      author: "Канал",
+      avatar: "https://cdn4.telesco.pe/file/avatar.jpg",
+      views: "40K",
+      edited: true,
+      reactions: [
+        { emoji: "", image: "", count: "5", paid: true },
+        { emoji: "❤", image: "//telegram.org/img/emoji/40/E29DA4.png", count: "2.1K", paid: false },
+      ],
+      waveforms: [[0, 31, 7]],
+    });
+  });
+
   it("marks forwarded audio and does not turn videos into voice messages", () => {
     const page = parsePage(
       message(
