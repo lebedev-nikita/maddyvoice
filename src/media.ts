@@ -197,12 +197,17 @@ export class Media extends Context.Service<
             Paths.videoOverlay,
             "-i",
             card.base,
+            "-i",
+            card.played,
             "-filter_complex",
             "[0:v]scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos," +
               "crop=1920:1080:(iw-ow)/2:(ih-oh)/2," +
               `setsar=1,${post.images.length ? "eq=saturation=0.94," : ""}format=rgba[photo];` +
               `[photo][1:v]overlay=0:840:format=auto[branded];` +
-              `[branded][2:v]overlay=${card.x}:${card.y}:format=auto,format=rgb24[frame]`,
+              `[branded][2:v]overlay=${card.x}:${card.y}:format=auto[carded];` +
+              `[3:v]crop=${card.wave.width}:${card.wave.height}:${card.wave.x}:${card.wave.y}[playedWave];` +
+              `[carded][playedWave]overlay=${card.x + card.wave.x}:${card.y + card.wave.y}:format=auto,` +
+              "format=rgb24[frame]",
             "-map",
             "[frame]",
             "-frames:v",
@@ -213,21 +218,31 @@ export class Media extends Context.Service<
           ]);
         }
         // Repeat each still frame on demand: a concat demuxer slideshow makes fps
-        // burst-duplicate full-size frames that FFmpeg then holds in memory.
+        // burst-duplicate full-size frames that FFmpeg then holds in memory. Stills are
+        // converted to the output colour space once; per frame only small layers change.
         const fps = 30;
+        const yuv = "scale=out_color_matrix=bt709:out_range=tv,";
         const starts = pictures.map((_, index) =>
           Math.round(((index * duration) / pictures.length) * fps),
         );
         const slides = pictures.map((_, index) => {
           const frames = index + 1 < pictures.length ? starts[index + 1]! - starts[index]! : 0;
-          return `[${index}:v]loop=loop=${frames - 1}:size=1[slide${index}];`;
+          return `[${index}:v]${yuv}format=yuv420p,loop=loop=${frames - 1}:size=1[slide${index}];`;
         });
-        // Playback progress: blue bars everywhere, then the unplayed bars from the card
-        // cover everything right of the position. Both layers are cropped per frame. The
-        // pixel column at the edge fills with the fraction of a pixel already played, so
-        // the fill moves every frame instead of in whole-pixel steps.
+        // Playback progress: the stills already show every bar played (blue); the unplayed
+        // bars from the card cover everything right of the position. The pixel column at
+        // the edge fills with the fraction of a pixel already played, so the fill moves
+        // every frame instead of in whole-pixel steps. Card images are decoded once and
+        // repeated; only these small crops are converted per frame.
         const { wave, timer } = card;
+        // 4:2:0 chroma covers 2 × 2 pixels: grow the per-frame layers to even rows so they
+        // replace whole chroma blocks; the extra rows are the card's plain background.
+        const lift = (card.y + wave.y) % 2;
+        const rows = wave.height + lift + ((wave.height + lift) % 2);
+        const layer = `crop=${wave.width}:${rows}:${wave.x}:${wave.y - lift}`;
+        const top = card.y + wave.y - lift;
         const played = `min(${wave.width},floor(${wave.width}*t/${duration}))`;
+        const repeat = `loop=loop=-1:size=1,setpts=N/(${fps}*TB),`;
         const edge = `min(1,${wave.width}*T/${duration}-floor(${wave.width}*T/${duration}))`;
         const timerText = join(work, "timer.txt");
         yield* attempt("Write timer template", () =>
@@ -245,16 +260,8 @@ export class Media extends Context.Service<
           ...pictures.flatMap((_, index) => ["-i", join(work, `frame-${index}.png`)]),
           "-i",
           audioPath,
-          "-loop",
-          "1",
-          "-framerate",
-          String(fps),
           "-i",
           card.base,
-          "-loop",
-          "1",
-          "-framerate",
-          String(fps),
           "-i",
           card.played,
           "-map",
@@ -264,21 +271,18 @@ export class Media extends Context.Service<
           "-filter_complex",
           slides.join("") +
             `${pictures.map((_, index) => `[slide${index}]`).join("")}` +
-            `concat=n=${pictures.length}:v=1:a=0,settb=1/${fps},setpts=N,fps=${fps},format=rgba[slides];` +
-            `[${audioInput + 2}:v]crop=${wave.width}:${wave.height}:${wave.x}:${wave.y},format=rgba,` +
-            `split[played][edgeSource];` +
-            `[edgeSource]pad=${wave.width + 1}:${wave.height}:0:0:color=0x00000000,` +
-            `crop=1:${wave.height}:'${played}':0,` +
-            `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${edge}'[edge];` +
-            `[${audioInput + 1}:v]crop=${wave.width}:${wave.height}:${wave.x}:${wave.y},` +
-            `pad=${wave.width * 2}:${wave.height}:0:0:color=0x00000000,` +
-            `crop=${wave.width}:${wave.height}:'${played}':0[unplayed];` +
-            `[slides][played]overlay=${card.x + wave.x}:${card.y + wave.y}:format=auto[progress];` +
-            `[progress][unplayed]overlay=x='${card.x + wave.x}+${played}':y=${card.y + wave.y}:format=auto[covered];` +
-            `[covered][edge]overlay=x='${card.x + wave.x}+${played}':y=${card.y + wave.y}:format=auto,` +
+            `concat=n=${pictures.length}:v=1:a=0,settb=1/${fps},setpts=N,fps=${fps}[slides];` +
+            `[${audioInput + 1}:v]${layer},format=rgba,` +
+            `pad=${wave.width * 2}:${rows}:0:0:color=0x00000000,${repeat}` +
+            `crop=${wave.width}:${rows}:'${played}':0,${yuv}format=yuva420p[unplayed];` +
+            `[${audioInput + 2}:v]${layer},format=rgba,` +
+            `pad=${wave.width + 1}:${rows}:0:0:color=0x00000000,${repeat}` +
+            `crop=1:${rows}:'${played}':0,` +
+            `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${edge}',${yuv}format=yuva420p[edge];` +
+            `[slides][unplayed]overlay=x='${card.x + wave.x}+${played}':y=${top}:format=yuv420[covered];` +
+            `[covered][edge]overlay=x='${card.x + wave.x}+${played}':y=${top}:format=yuv420,` +
             `drawtext=fontfile='${Paths.cardFont}':textfile='${timerText}':fontcolor=0x8f9eab:` +
-            `fontsize=${timer.size}:x=${card.x + timer.x}:y=${card.y + timer.y},` +
-            "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[video]",
+            `fontsize=${timer.size}:x=${card.x + timer.x}:y=${card.y + timer.y}[video]`,
           "-t",
           String(duration),
           "-r",
