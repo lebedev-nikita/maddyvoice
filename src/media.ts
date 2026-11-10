@@ -286,7 +286,7 @@ export class Media extends Context.Service<
           "-c:v",
           "libx264",
           "-preset",
-          "fast",
+          "veryfast",
           "-threads",
           "2",
           "-crf",
