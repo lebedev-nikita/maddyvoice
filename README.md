@@ -6,7 +6,7 @@ to a dedicated YouTube channel. Runs locally with Bun, Effect, BoxDB and FFmpeg.
 The first scan records the current end of the feed. Subsequent scans queue only
 new recordings. Historical imports are explicit and do not move that boundary.
 Forwarded messages, music uploads and videos are excluded. Each voice message
-becomes a 1080p60 H.264/AAC MP4 using its attached photos as a slideshow, or one
+becomes a 1080p30 H.264/AAC MP4 using its attached photos as a slideshow, or one
 of twelve bundled backgrounds chosen by message ID. Photos fill the frame with
 proportional cropping. `@MaddyvoiceArchive` appears at bottom left. On the right,
 a Telegram-style card shows the channel, voice waveform, caption, reactions, views
