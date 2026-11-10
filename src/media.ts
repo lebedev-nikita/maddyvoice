@@ -214,7 +214,7 @@ export class Media extends Context.Service<
         }
         // Repeat each still frame on demand: a concat demuxer slideshow makes fps
         // burst-duplicate full-size frames that FFmpeg then holds in memory.
-        const fps = 60;
+        const fps = 30;
         const starts = pictures.map((_, index) =>
           Math.round(((index * duration) / pictures.length) * fps),
         );
@@ -223,9 +223,12 @@ export class Media extends Context.Service<
           return `[${index}:v]loop=loop=${frames - 1}:size=1[slide${index}];`;
         });
         // Playback progress: blue bars everywhere, then the unplayed bars from the card
-        // cover everything right of the position. Both layers are cropped per frame.
+        // cover everything right of the position. Both layers are cropped per frame. The
+        // pixel column at the edge fills with the fraction of a pixel already played, so
+        // the fill moves every frame instead of in whole-pixel steps.
         const { wave, timer } = card;
         const played = `min(${wave.width},floor(${wave.width}*t/${duration}))`;
+        const edge = `min(1,${wave.width}*T/${duration}-floor(${wave.width}*T/${duration}))`;
         const timerText = join(work, "timer.txt");
         yield* attempt("Write timer template", () =>
           writeFile(timerText, "%{eif:trunc(t/60):d}:%{eif:mod(trunc(t),60):d:2}"),
@@ -262,12 +265,17 @@ export class Media extends Context.Service<
           slides.join("") +
             `${pictures.map((_, index) => `[slide${index}]`).join("")}` +
             `concat=n=${pictures.length}:v=1:a=0,settb=1/${fps},setpts=N,fps=${fps},format=rgba[slides];` +
-            `[${audioInput + 2}:v]crop=${wave.width}:${wave.height}:${wave.x}:${wave.y}[played];` +
+            `[${audioInput + 2}:v]crop=${wave.width}:${wave.height}:${wave.x}:${wave.y},format=rgba,` +
+            `split[played][edgeSource];` +
+            `[edgeSource]pad=${wave.width + 1}:${wave.height}:0:0:color=0x00000000,` +
+            `crop=1:${wave.height}:'${played}':0,` +
+            `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${edge}'[edge];` +
             `[${audioInput + 1}:v]crop=${wave.width}:${wave.height}:${wave.x}:${wave.y},` +
             `pad=${wave.width * 2}:${wave.height}:0:0:color=0x00000000,` +
             `crop=${wave.width}:${wave.height}:'${played}':0[unplayed];` +
             `[slides][played]overlay=${card.x + wave.x}:${card.y + wave.y}:format=auto[progress];` +
-            `[progress][unplayed]overlay=x='${card.x + wave.x}+${played}':y=${card.y + wave.y}:format=auto,` +
+            `[progress][unplayed]overlay=x='${card.x + wave.x}+${played}':y=${card.y + wave.y}:format=auto[covered];` +
+            `[covered][edge]overlay=x='${card.x + wave.x}+${played}':y=${card.y + wave.y}:format=auto,` +
             `drawtext=fontfile='${Paths.cardFont}':textfile='${timerText}':fontcolor=0x8f9eab:` +
             `fontsize=${timer.size}:x=${card.x + timer.x}:y=${card.y + timer.y},` +
             "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[video]",

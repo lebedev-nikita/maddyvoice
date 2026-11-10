@@ -172,7 +172,7 @@ try {
         stream.codec_name === "h264" &&
         stream.width === 1920 &&
         stream.height === 1080 &&
-        stream.r_frame_rate === "60/1",
+        stream.r_frame_rate === "30/1",
     ),
   );
   assert(probe.streams.some((stream) => stream.codec_name === "aac"));
@@ -280,7 +280,7 @@ try {
   assert.equal(image.readUInt32BE(16), 1280);
   assert.equal(image.readUInt32BE(20), 720);
   console.log(
-    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, H.264 1080p60 + AAC, full duration, quote thumbnail",
+    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, H.264 1080p30 + AAC, full duration, quote thumbnail",
   );
 } finally {
   globalThis.fetch = originalFetch;
