@@ -1,6 +1,6 @@
 # Raspberry Pi deployment
 
-The production worker runs on `pibox` as `maddyvoice.service`, independently of
+The production worker runs on `pi` as `maddyvoice.service`, independently of
 the Mac. It starts at boot and restarts after failure. No inbound port is needed.
 
 Deployment is manual over SSH. Pushing to `origin/main` does not update the Pi:
@@ -37,7 +37,7 @@ are mode `0600`.
 ## Deploy an update
 
 This procedure assumes the Pi is already provisioned with the SSH alias
-`pibox`, sudo access, FFmpeg in `/opt/ffmpeg`, Chromium, pinned Bun and `tg`, working YouTube and Telegram
+`pi`, sudo access, FFmpeg in `/opt/ffmpeg`, Chromium, pinned Bun and `tg`, working YouTube and Telegram
 authorization, a running CLIProxyAPI with a Codex login, and its client key in
 `/etc/maddyvoice-topics.env`. It
 updates application code without replacing runtime data.
@@ -63,13 +63,13 @@ below. Existing YouTube publication dates cannot be reordered by a code update.
    maddyvoice_revision=FULL_REVIEWED_COMMIT_SHA
    maddyvoice_bundle="$(mktemp -t maddyvoice-release)"
    git archive --format=tar.gz --output="$maddyvoice_bundle" "$maddyvoice_revision" src assets db deploy scripts package.json bun.lock
-   scp "$maddyvoice_bundle" pibox:/tmp/maddyvoice-release.tar.gz
+   scp "$maddyvoice_bundle" pi:/tmp/maddyvoice-release.tar.gz
    ```
 
    This excludes local `data`, `.env`, `node_modules` and credentials. Keep the
    existing `/opt/maddyvoice/bin` binaries when replacing source files.
 
-3. Connect with `ssh pibox`. Run the remaining commands on the Pi. Stop both
+3. Connect with `ssh pi`. Run the remaining commands on the Pi. Stop both
    services and verify they have exited; do not run manual jobs during rollout:
 
    ```sh
@@ -166,12 +166,12 @@ back to Telegram's smaller emoji images.
 From the Mac:
 
 ```sh
-ssh pibox 'sudo systemctl status maddyvoice --no-pager'
-ssh pibox 'sudo systemctl status maddyvoice-topics --no-pager'
-ssh pibox 'sudo journalctl -u maddyvoice -n 50 --no-pager'
-ssh pibox 'sudo journalctl -u maddyvoice-topics -n 30 --no-pager'
-ssh pibox 'curl --fail http://127.0.0.1:11435/health'
-ssh pibox 'sudo systemctl restart maddyvoice'
+ssh pi 'sudo systemctl status maddyvoice --no-pager'
+ssh pi 'sudo systemctl status maddyvoice-topics --no-pager'
+ssh pi 'sudo journalctl -u maddyvoice -n 50 --no-pager'
+ssh pi 'sudo journalctl -u maddyvoice-topics -n 30 --no-pager'
+ssh pi 'curl --fail http://127.0.0.1:11435/health'
+ssh pi 'sudo systemctl restart maddyvoice'
 ```
 
 On the Pi, use the same environment and account for CLI operations:
