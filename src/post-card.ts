@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { AppError, attempt, Paths, Settings } from "./core.ts";
 import type { Post } from "./telegram.ts";
@@ -252,21 +252,15 @@ class DevTools {
   }
 }
 
-async function pageSocket(profile: string, signal: AbortSignal): Promise<string> {
+/** The page's DevTools WebSocket once Chromium has written its port file. */
+async function pageSocket(profile: string, signal: AbortSignal): Promise<string | undefined> {
   const portFile = join(profile, "DevToolsActivePort");
-  for (let waited = 0; waited < 30_000; waited += 100) {
-    signal.throwIfAborted();
-    const port = existsSync(portFile) ? (await readFile(portFile, "utf8")).split("\n")[0] : "";
-    if (port) {
-      const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal });
-      const page = Schema.decodeUnknownSync(Targets)(await response.json()).find(
-        (target) => target.type === "page" && target.webSocketDebuggerUrl,
-      );
-      if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error("Chromium did not open its DevTools port within 30 seconds");
+  const port = existsSync(portFile) ? (await readFile(portFile, "utf8")).split("\n")[0] : "";
+  if (!port) return undefined;
+  const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal });
+  return Schema.decodeUnknownSync(Targets)(await response.json()).find(
+    (target) => target.type === "page" && target.webSocketDebuggerUrl,
+  )?.webSocketDebuggerUrl;
 }
 
 const imageHosts = /(^|\.)(telesco\.pe|cdn-telegram\.org|telegram\.org|t\.me|cdn\.jsdelivr\.net)$/;
@@ -341,7 +335,7 @@ export class PostCard extends Context.Service<
           async () => `data:font/ttf;base64,${(await readFile(Paths.cardFont)).toString("base64")}`,
         );
         const profile = join(work, "chromium");
-        yield* spawner
+        const browser = yield* spawner
           .spawn(
             ChildProcess.make(
               config.chromium,
@@ -357,7 +351,7 @@ export class PostCard extends Context.Service<
                 "--remote-debugging-port=0",
                 "about:blank",
               ],
-              { stdout: "ignore", stderr: "ignore" },
+              { stdout: "ignore", stderr: "pipe" },
             ),
           )
           .pipe(
@@ -365,12 +359,31 @@ export class PostCard extends Context.Service<
               () => new AppError({ message: `Cannot start ${config.chromium}; install Chromium` }),
             ),
           );
+        // Keep the end of Chromium's log for errors; draining it also keeps the pipe open.
+        let log = "";
+        yield* browser.stderr.pipe(
+          Stream.decodeText(),
+          Stream.runForEach((text) => Effect.sync(() => (log = (log + text).slice(-1500)))),
+          Effect.ignore,
+          Effect.forkScoped,
+        );
+        const failure = (message: string) =>
+          new AppError({ message: `${message}; Chromium log: ${log.trim() || "(empty)"}` });
+        let socket: string | undefined;
+        for (let waited = 0; !socket; waited += 100) {
+          if (!(yield* browser.isRunning.pipe(Effect.orElseSucceed(() => false))))
+            return yield* failure("Chromium exited before opening DevTools");
+          if (waited >= 30_000)
+            return yield* failure("Chromium did not open its DevTools port within 30 seconds");
+          socket = yield* attempt("Find Chromium DevTools", (signal) =>
+            pageSocket(profile, signal),
+          );
+          if (!socket) yield* Effect.sleep("100 millis");
+        }
         const base = join(work, "card.png");
         const played = join(work, "card-played.png");
         const geometry = yield* Effect.acquireUseRelease(
-          attempt("Connect to Chromium", async (signal) =>
-            DevTools.connect(await pageSocket(profile, signal)),
-          ),
+          attempt("Connect to Chromium", () => DevTools.connect(socket)),
           (page) =>
             attempt("Render post card", async () => {
               const area = {
