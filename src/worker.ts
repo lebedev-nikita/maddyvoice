@@ -312,4 +312,10 @@ export const retryJob = Effect.fn("retryJob")(function* (key: string, allowNew: 
     return;
   }
   yield* runSql("Retry job", "UPDATE jobs SET next_attempt=0, error=NULL WHERE id=?", [key]);
+  // A staged upload can be waiting on its title's own backoff; retry that too.
+  yield* runSql(
+    "Retry pending metadata",
+    "UPDATE video_titles SET next_attempt=0, error=NULL WHERE job_id=? AND status='pending'",
+    [key],
+  );
 });
