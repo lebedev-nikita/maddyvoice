@@ -308,6 +308,22 @@ it("continues updating published videos while the private publication head is wa
   );
 });
 
+it("retries a staged upload's metadata backoff on request instead of waiting it out", async () => {
+  const f = await fixture(new Client(), false);
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* f.prepare([post(1), post(2)]);
+      yield* drainQueue(10);
+      expect(f.metadata.generations).toBe(0);
+      expect(f.client.publications).toEqual([]);
+      yield* retryJob("maddysontg-1-0", false);
+      yield* drainQueue(1);
+      expect(f.metadata.generations).toBe(1);
+      expect(f.client.publications).toEqual(["maddysontg-1-0"]);
+    }).pipe(Effect.provide(f.layer)),
+  );
+});
+
 it("refuses publication when metadata generation is disabled", async () => {
   const f = await fixture(new Client(), false);
   await Effect.runPromise(
