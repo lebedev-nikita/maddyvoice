@@ -37,6 +37,11 @@ Telegram credentials are unnecessary for this public channel. Reading relies
 on Telegram's public web preview; unavailable or changed markup produces an
 error and preserves the live cursor rather than silently skipping posts.
 
+A T3 Code worktree is prepared by `just worktree-init <primary checkout>`, which
+copies that checkout's `.env` and installs dependencies. [t3.json](t3.json)
+declares it as the setup action; import it once per machine in the project's
+settings under **Actions**, because T3 Code runs only imported actions.
+
 ## Connect a new YouTube channel
 
 1. [Create a dedicated channel](https://www.youtube.com/channel_switcher), for
