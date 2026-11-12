@@ -125,7 +125,14 @@ export class TopicService extends Context.Service<
             const result = yield* commentTopics.generate(text, candidates);
             return yield* attempt("Finalize comment-assisted topic", async () =>
               finalizeCommentTopic(result.draft, text, candidates),
-            ).pipe(Effect.catch(() => Effect.succeed(undefined)));
+            ).pipe(
+              // A rejected draft costs one attempt without reaching the reviewer; log why.
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  `Title draft #${source.messageId} rejected: ${error.message}`,
+                ).pipe(Effect.as(undefined)),
+              ),
+            );
           });
           const topic = yield* reviewedTopic(text, generate, (speech, topic) =>
             commentTopics.verify(speech, topic),
