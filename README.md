@@ -42,6 +42,37 @@ copies that checkout's `.env` and installs dependencies. [t3.json](t3.json)
 declares it as the setup action; import it once per machine in the project's
 settings under **Actions**, because T3 Code runs only imported actions.
 
+## Episode preview
+
+Short voices are being merged into episodes: one video per run of voices with
+less than six hours of silence between them, in Telegram order. The publisher
+still uploads one video per voice; `preview-episode` renders an episode locally
+so the format can be judged first.
+
+```sh
+bun run cli preview-episode 7779
+```
+
+The command finds the episode containing that voice, reading the feed in both
+directions until six hours without voices lie on each side, and writes
+`data/videos/preview-episode-<first voice id>.mp4`. It prints the start of every
+voice in seconds, the text posts shown with it and the posts left out;
+`complete` is `false` while later voices may still join the episode.
+
+Text posts published from three hours before the first voice to three hours
+after the last are shown on the card under the voice they belong to by meaning,
+one at a time; posts longer than 700 characters take several pages. Screen time
+is divided by text length. A post's own photos fill the frame while it is shown.
+Forwarded posts, posts without text, obvious third-party advertising and posts
+unrelated to every voice are left out; Maddyson's own streams and projects stay.
+
+Meaning comes from transcripts. Each voice is transcribed once through the
+OpenAI API (`OPENAI_TRANSCRIPTION_API_KEY`, a key restricted to `/v1/audio`;
+`TRANSCRIPTION_MODEL` defaults to `gpt-4o-transcribe`) and saved under
+`data/transcripts/`. A model then places the posts through the same proxy as the
+topic service (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `TOPIC_MODEL`). The preview
+reads no queue and uploads nothing.
+
 ## Connect a new YouTube channel
 
 1. [Create a dedicated channel](https://www.youtube.com/channel_switcher), for
