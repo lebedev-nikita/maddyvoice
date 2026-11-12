@@ -1,0 +1,13 @@
+{
+  "$schema": "https://t3.codes/schema/t3.json",
+  "iconPath": "assets/icon.svg",
+  "scripts": [
+    {
+      "name": "Setup worktree",
+      "command": "root=\"${T3CODE_PROJECT_ROOT:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir)\")}\"; if [ \"$(cd \"$root\" && pwd -P)\" != \"$(pwd -P)\" ] && [ ! -e .env ] && [ -f \"$root/.env\" ]; then cp \"$root/.env\" .env && chmod 600 .env && echo \"Copied the project .env into this worktree (mode 0600).\"; else echo \"Keeping this worktree's .env as is.\"; fi",
+      "icon": "configure",
+      "runOnWorktreeCreate": true,
+      "async": false
+    }
+  ]
+}
