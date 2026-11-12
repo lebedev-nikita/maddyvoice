@@ -174,6 +174,31 @@ it("allows a supported nickname to decline in a title without relaxing literal c
   ).toBe("О разговоре с Жмилём в личных сообщениях");
 });
 
+it("finds a two-word name whose first word declines while the surname stays fixed", () => {
+  const transcript =
+    "И по Алине Рин. Да, я действительно хотел, чтобы она приняла участие в ивенте.";
+  const mentions = (prefix: string, nick: string) => [
+    { commentId: `${prefix}1`, quote: `${nick} снова в голосовании.` },
+    { commentId: `${prefix}2`, quote: `Где ${nick}?` },
+  ];
+  const candidates = [
+    { nick: "Алину Рин", mentions: mentions("a", "Алину Рин") },
+    { nick: "Алина Рин", mentions: mentions("b", "Алина Рин") },
+  ];
+  const draft = {
+    topic: "об участии Алины Рин в ивенте",
+    subjects: [{ name: "Алина Рин", transcriptQuote: transcript, commentIds: ["b1", "b2"] }],
+  };
+  expect(validateGeneratedTopic(draft, transcript, candidates).topic).toBe(draft.topic);
+  expect(() =>
+    validateGeneratedTopic(
+      { ...draft, topic: "об участии Алисы Рин в ивенте" },
+      transcript,
+      candidates,
+    ),
+  ).toThrow("absent from title");
+});
+
 it("retains the exact model draft when validation rejects an author's repeated name", () => {
   const transcript = "Автор обсуждает выбор новой игры для эфира.";
   const draft = { topic: "Мэддисон обсуждает выбор новой игры", subjects: [] };
