@@ -14,9 +14,18 @@ const shadow = { left: 22, top: 22, right: 28, bottom: 30 } as const;
 const scales = Array.from({ length: 27 }, (_, index) => 2.4 - index * 0.025);
 
 type CardLayers = {
-  /** Card as posted, positioned at (x, y) in the frame. */
-  readonly base: string;
-  /** Only the played (blue) waveform bars, same size as base. */
+  /**
+   * The card once per slide, positioned at (x, y) in the frame: the voice as posted, then
+   * that slide's text post. Every image has the same size and the same voice bubble.
+   */
+  readonly slides: readonly {
+    readonly image: string;
+    /** Text post shown under the voice; absent when the voice stands alone. */
+    readonly post?: Post;
+    /** Relative screen time. */
+    readonly weight: number;
+  }[];
+  /** Only the played (blue) waveform bars, same size as the slides. */
   readonly played: string;
   readonly x: number;
   readonly y: number;
@@ -33,6 +42,92 @@ type CardLayers = {
 
 export type CardImages = { readonly avatar: string; readonly reactions: readonly string[] };
 
+/** One screen of a text post shown under the voice; a long post takes several. */
+export type TextSlide = {
+  readonly post: Post;
+  readonly text: string;
+  readonly page: number;
+  readonly pages: number;
+};
+
+// Coarsest break first: a page ends between paragraphs when it can, inside a word never.
+const breaks = [
+  [/\n\s*\n/, "\n\n"],
+  [/\n/, "\n"],
+  [/(?<=[.!?…])\s+/, " "],
+  [/\s+/, " "],
+] as const;
+
+function pieces(text: string, limit: number, level = 0): { text: string; joiner: string }[] {
+  const split = breaks[level];
+  if (text.length <= limit || !split) return [{ text, joiner: "" }];
+  return text
+    .split(split[0])
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .flatMap((part) =>
+      pieces(part, limit, level + 1).map((piece, index) =>
+        index === 0 ? { ...piece, joiner: split[1] } : piece,
+      ),
+    );
+}
+
+type Piece = ReturnType<typeof pieces>[number];
+type Paging = { readonly count: number; readonly longest: number; readonly from: number };
+
+const joined = (parts: readonly Piece[]) =>
+  parts.map((piece, index) => (index ? piece.joiner : "") + piece.text).join("");
+
+const better = (a: Paging, b: Paging | undefined) =>
+  !b || a.count < b.count || (a.count === b.count && a.longest < b.longest);
+
+/**
+ * Split a post into the fewest pages of at most `limit` characters, as even in length as its
+ * paragraphs and sentences allow, so that no page is left with a stray last line.
+ */
+export function textPages(text: string, limit = 700): string[] {
+  const parts = text.trim() ? pieces(text.trim(), limit) : [];
+  // best[end] pages the first `end` pieces; its last page starts at piece `from`.
+  const best: Paging[] = [{ count: 0, longest: 0, from: 0 }];
+  for (let end = 1; end <= parts.length; end++) {
+    let choice: Paging | undefined;
+    for (let from = end - 1, length = 0; from >= 0; from--) {
+      length += parts[from]!.text.length + (length ? parts[from + 1]!.joiner.length : 0);
+      // Only a word longer than the limit may overflow its page.
+      if (length > limit && choice) break;
+      const paging = {
+        count: best[from]!.count + 1,
+        longest: Math.max(best[from]!.longest, length),
+        from,
+      };
+      if (better(paging, choice)) choice = paging;
+    }
+    best.push(choice!);
+  }
+  const pages: string[] = [];
+  for (let end = parts.length; end > 0; end = best[end]!.from)
+    pages.unshift(joined(parts.slice(best[end]!.from, end)));
+  return pages;
+}
+
+export const textSlides = (texts: readonly Post[]): TextSlide[] =>
+  texts.flatMap((post) =>
+    textPages(post.text).map((text, index, pages) => ({
+      post,
+      text,
+      page: index + 1,
+      pages: pages.length,
+    })),
+  );
+
+const paragraphs = (text: string) =>
+  text
+    .split(/\n\s*\n/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => `<p>${escapeHtml(part)}</p>`)
+    .join("");
+
 const moscowTime = new Intl.DateTimeFormat("ru-RU", {
   timeZone: "Europe/Moscow",
   hour: "2-digit",
@@ -42,14 +137,28 @@ const moscowTime = new Intl.DateTimeFormat("ru-RU", {
 const star = `<svg viewBox="0 0 24 24" width="17" height="17"><path fill="#f5a623" d="M12 2.6l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></svg>`;
 const eye = `<svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M12 5C6.5 5 2.7 9.1 1.5 12c1.2 2.9 5 7 10.5 7s9.3-4.1 10.5-7C21.3 9.1 17.5 5 12 5zm0 11.5a4.5 4.5 0 110-9 4.5 4.5 0 010 9zm0-2.3a2.2 2.2 0 100-4.4 2.2 2.2 0 000 4.4z"/></svg>`;
 
-/** Telegram-like voice post; images are data URIs so Chromium never waits on the network. */
-export function cardHtml(post: Post, audioIndex: number, images: CardImages, font: string): string {
+const footer = (post: Post) =>
+  (post.card?.views
+    ? `${eye}<span>${escapeHtml(post.card.views)}</span><span>&nbsp;·&nbsp;</span>`
+    : "") +
+  `<span>${post.card?.edited ? "изменено " : ""}${moscowTime.format(Date.parse(post.date))}</span>`;
+
+/**
+ * Telegram-like voice post, followed by the text posts shown while it plays (one is visible
+ * at a time). `position` marks the voice's place in an episode. Images are data URIs so
+ * Chromium never waits on the network.
+ */
+export function cardHtml(
+  post: Post,
+  audioIndex: number,
+  images: CardImages,
+  font: string,
+  slides: readonly TextSlide[] = [],
+  position = "",
+): string {
   const card = post.card;
   const waveform = card?.waveforms[audioIndex] ?? [];
-  const paragraphs = post.text
-    .split(/\n\s*\n/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const caption = paragraphs(post.text);
   const reactions = (card?.reactions ?? []).map((reaction, index) => {
     if (reaction.paid)
       return `<span class="reaction paid">${star}${escapeHtml(reaction.count)}</span>`;
@@ -59,10 +168,11 @@ export function cardHtml(post: Post, audioIndex: number, images: CardImages, fon
       : `<span class="glyph">${escapeHtml(reaction.emoji)}</span>`;
     return `<span class="reaction">${icon}${escapeHtml(reaction.count)}</span>`;
   });
-  const meta = [
-    card?.views ? `${eye}<span>${escapeHtml(card.views)}</span><span>&nbsp;·&nbsp;</span>` : "",
-    `<span>${card?.edited ? "изменено " : ""}${moscowTime.format(Date.parse(post.date))}</span>`,
-  ];
+  const posts = slides.map(
+    (slide) =>
+      `<div class="bubble post"><div class="text">${paragraphs(slide.text)}</div>` +
+      `<div class="footer">${slide.pages > 1 ? `<span class="page">${slide.page} / ${slide.pages}</span>` : ""}${footer(slide.post)}</div></div>`,
+  );
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 @font-face { font-family: Roboto; src: url("${font}"); font-weight: 100 900; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -73,6 +183,7 @@ html, body { background: transparent; font-family: Roboto, sans-serif; -webkit-f
 .author { display: flex; align-items: center; gap: 8px; color: #3a8bc8; font-weight: 600; font-size: 14.5px;
   line-height: 19px; margin-bottom: 7px; }
 .author span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.author .position { margin-left: auto; flex: none; color: #a0acb6; font-weight: 500; font-size: 12.5px; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; flex: none; background: #3a8bc8; }
 .voice { display: flex; align-items: center; gap: 11px; margin-bottom: 7px; }
 .play { width: 44px; height: 44px; border-radius: 50%; background: #40a7e3; flex: none; position: relative; }
@@ -93,34 +204,44 @@ html, body { background: transparent; font-family: Roboto, sans-serif; -webkit-f
 .reaction.paid { background: rgba(245,166,35,.16); color: #d2860c; }
 .footer { display: flex; justify-content: flex-end; align-items: center; gap: 4px; color: #a0acb6; font-size: 12.5px; }
 .footer svg { margin-right: 1px; }
+.post { margin-top: 8px; padding-top: 10px; }
+.page { margin-right: auto; }
 body.played .bubble > *:not(.voice), body.played .voice > *:not(.wave-wrap), body.played .duration { visibility: hidden; }
 body.played .bubble { background: none; box-shadow: none; }
 </style></head><body>
 <div class="card"><div class="bubble">
-  <div class="author">${images.avatar ? `<img class="avatar" src="${images.avatar}">` : `<span class="avatar"></span>`}<span>${escapeHtml(card?.author ?? "")}</span></div>
+  <div class="author">${images.avatar ? `<img class="avatar" src="${images.avatar}">` : `<span class="avatar"></span>`}<span>${escapeHtml(card?.author ?? "")}</span>${position ? `<span class="position">${escapeHtml(position)}</span>` : ""}</div>
   <div class="voice"><div class="play"></div>
     <div class="wave-wrap"><div class="wave" data-waveform="${waveform.join(",")}"></div><div class="duration"></div></div></div>
-  ${paragraphs.length ? `<div class="text">${paragraphs.map((part) => `<p>${escapeHtml(part)}</p>`).join("")}</div>` : ""}
+  ${caption ? `<div class="text">${caption}</div>` : ""}
   ${reactions.length ? `<div class="reactions">${reactions.join("")}</div>` : ""}
-  <div class="footer">${meta.join("")}</div>
-</div></div>
+  <div class="footer">${footer(post)}</div>
+</div>${posts.join("")}</div>
 </body></html>`;
 }
 
-// Runs inside the page. fit() picks the scale; draw() paints the waveform in device pixels.
+// Runs inside the page. show() leaves one text post visible; fit() picks the scale that
+// holds every slide; draw() paints the waveform in device pixels.
 const pageScript = `
-const card = document.querySelector(".card"), text = document.querySelector(".text");
+const card = document.querySelector(".card"), caption = document.querySelector(".bubble:not(.post) .text");
+const posts = [...document.querySelectorAll(".post")];
+const slides = posts.length ? posts.map((_, index) => index) : [0];
 const box = (element) => { const r = element.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; };
+window.show = (slide) => posts.forEach((post, index) => { post.style.display = index === slide ? "" : "none"; });
 window.fit = (scales, area, padding) => {
-  const fits = (scale) => {
+  const fits = (scale, slide) => {
     card.style.width = area.width / scale + padding.width + "px";
+    show(slide);
     return card.getBoundingClientRect().height <= area.height / scale + padding.height;
   };
-  for (const scale of scales) if (fits(scale)) return scale;
-  // Even the smallest type overflows: drop whole lines from the end of the text.
+  for (const scale of scales) if (slides.every((slide) => fits(scale, slide))) return scale;
+  // Even the smallest type overflows: drop whole lines from the end of the slide's post,
+  // then from the voice's own caption.
   const scale = scales[scales.length - 1];
-  for (let lines = text ? Math.round(text.scrollHeight / 21) : 0; !fits(scale) && lines > 1; )
-    text.style.webkitLineClamp = String(--lines);
+  for (const slide of slides)
+    for (const text of [posts[slide]?.querySelector(".text"), caption])
+      for (let lines = text ? Math.round(text.scrollHeight / 21) : 0; !fits(scale, slide) && lines > 1; )
+        text.style.webkitLineClamp = String(--lines);
   return scale;
 };
 window.draw = () => {
@@ -149,7 +270,10 @@ window.draw = () => {
     context.fill();
   });
   wave.replaceChildren(canvas);
-  return { card: box(card), wave: box(canvas), pixels: [canvas.width, canvas.height], timer: box(document.querySelector(".duration")) };
+  // Every slide is captured at the tallest one's size so the images overlay alike.
+  const [x, y, width] = box(card);
+  const height = Math.max(...slides.map((slide) => (show(slide), box(card)[3])));
+  return { card: [x, y, width, height], wave: box(canvas), pixels: [canvas.width, canvas.height], timer: box(document.querySelector(".duration")) };
 };
 `;
 
@@ -203,8 +327,17 @@ const pngSize = (bytes: Buffer) => ({
 export class PostCard extends Context.Service<
   PostCard,
   {
-    /** Write the card's base and played layers into `work` and place them in the frame. */
-    render(post: Post, audioIndex: number, work: string): Effect.Effect<CardLayers, AppError>;
+    /**
+     * Write the card's slides and played layer into `work` and place them in the frame.
+     * `texts` are the posts shown while the voice plays; `position` is its place in an episode.
+     */
+    render(
+      post: Post,
+      audioIndex: number,
+      work: string,
+      texts?: readonly Post[],
+      position?: string,
+    ): Effect.Effect<CardLayers, AppError>;
   }
 >()("maddyvoice/PostCard") {
   static readonly layer = Layer.effect(
@@ -216,7 +349,10 @@ export class PostCard extends Context.Service<
         post: Post,
         audioIndex: number,
         work: string,
+        texts: readonly Post[] = [],
+        position = "",
       ) {
+        const pages = textSlides(texts);
         const images = yield* attempt("Download post card images", async (signal) => ({
           avatar: post.card?.avatar ? await imageData([post.card.avatar], signal) : "",
           reactions: await Promise.all(
@@ -235,7 +371,12 @@ export class PostCard extends Context.Service<
           Effect.provideService(Settings, config),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
-        const base = join(work, "card.png");
+        // A voice without text posts is a single slide.
+        const slides = (pages.length ? pages : [undefined]).map((page, index) => ({
+          image: join(work, `card-${index}.png`),
+          post: page?.post,
+          weight: Math.max(page?.text.length ?? 0, 150),
+        }));
         const played = join(work, "card-played.png");
         const geometry = yield* attempt("Render post card", async () => {
           const area = {
@@ -255,7 +396,7 @@ export class PostCard extends Context.Service<
             deviceScaleFactor: 1,
             mobile: false,
           });
-          await page.load(cardHtml(post, audioIndex, images, font));
+          await page.load(cardHtml(post, audioIndex, images, font, pages, position));
           await page.evaluate(pageScript);
           const scale = Number(
             await page.evaluate(
@@ -270,14 +411,17 @@ export class PostCard extends Context.Service<
           });
           const layout = Schema.decodeUnknownSync(Geometry)(await page.evaluate("draw()"));
           const [, , width, height] = layout.card;
-          await page.screenshot(base, width, height);
+          for (const [index, slide] of slides.entries()) {
+            await page.evaluate(`show(${index})`);
+            await page.screenshot(slide.image, width, height);
+          }
           await page.evaluate("document.body.classList.add('played'), draw()");
           await page.screenshot(played, width, height);
           return { scale, layout };
         });
         const size = pngSize(
           yield* attempt("Read card image", () =>
-            readFile(base).then((bytes) => bytes.subarray(0, 24)),
+            readFile(played).then((bytes) => bytes.subarray(0, 24)),
           ),
         );
         const { scale, layout } = geometry;
@@ -291,7 +435,7 @@ export class PostCard extends Context.Service<
           Math.round(CardArea.bottom + shadow.bottom * scale) - size.height,
         );
         return {
-          base,
+          slides,
           played,
           x,
           y,

@@ -178,7 +178,7 @@ try {
   assert(probe.streams.some((stream) => stream.codec_name === "aac"));
   assert(probe.streams.every((stream) => Math.abs(Number(stream.duration) - duration) < 0.1));
   assert(Math.abs(Number(probe.format.duration) - duration) < 0.1);
-  const pixels = async (time: number, crop: string) => {
+  const pixels = async (time: number, crop: string, path = output.path) => {
     const result = await exec(
       ffmpeg,
       [
@@ -188,7 +188,7 @@ try {
         "-ss",
         String(time),
         "-i",
-        output.path,
+        path,
         "-frames:v",
         "1",
         "-vf",
@@ -267,6 +267,58 @@ try {
     !(r! > 150 && g! < 80 && b! < 80) && !(b! > 150 && r! < 80 && g! < 80),
     "A post without photos must use a rotating background",
   );
+  // Two voices in one video: the first shows two text posts in turn, one with its own photo.
+  const voice = (id: number, images: string[] = []) => ({
+    id,
+    date: "2026-10-26T01:02:03.000Z",
+    text: "",
+    forwarded: false,
+    url: `https://t.me/maddysontg/${id}`,
+    audio: ["https://cdn4.telesco.pe/audio"],
+    images,
+    card,
+  });
+  const episode = await Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* (yield* Media).renderEpisode(
+        [
+          {
+            post: voice(3),
+            audioIndex: 0,
+            texts: [
+              {
+                ...voice(4, ["https://cdn4.cdn-telegram.org/blue"]),
+                audio: [],
+                text: "Первый пост",
+              },
+              { ...voice(5), audio: [], text: "Второй пост" },
+            ],
+          },
+          { post: voice(6, ["https://cdn4.cdn-telegram.org/red"]), audioIndex: 0, texts: [] },
+        ],
+        "episode",
+      );
+    }).pipe(Effect.provide(media)),
+  );
+  assert.deepEqual(
+    episode.starts.map((start) => Math.round(start * 10) / 10),
+    [0, duration],
+  );
+  assert(Math.abs(episode.duration - 2 * duration) < 0.2, `Episode lasts ${episode.duration}s`);
+  const scene = async (time: number) => [...(await pixels(time, "1:1:400:540", episode.path))];
+  const [first, second, third] = [await scene(1), await scene(3), await scene(5)];
+  assert(
+    first[2]! > 150 && first[0]! < 80,
+    `A text post's photo must fill the frame: ${first.join(",")}`,
+  );
+  assert(
+    !(second[2]! > 150 && second[0]! < 80 && second[1]! < 80),
+    `The next text post must return to the background: ${second.join(",")}`,
+  );
+  assert(
+    third[0]! > 150 && third[2]! < 80,
+    `The second voice must show its own photo: ${third.join(",")}`,
+  );
   const thumbnail = await Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* Thumbnails).render(
@@ -314,7 +366,7 @@ try {
     "The thumbnail shows the video scene",
   );
   console.log(
-    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, H.264 1080p30 + AAC, full duration, quote thumbnail",
+    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, two-voice episode with text posts, H.264 1080p30 + AAC, full duration, quote thumbnail",
   );
 } finally {
   globalThis.fetch = originalFetch;

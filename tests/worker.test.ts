@@ -196,7 +196,10 @@ it("persists the session BEFORE video bytes and recovers a lost completion witho
   const youtube = Layer.succeed(YouTube, YouTube.of({ load: () => Effect.succeed(client) }));
   const media = Layer.succeed(
     Media,
-    Media.of({ render: () => Effect.fail(new AppError({ message: "Must reuse existing video" })) }),
+    Media.of({
+      render: () => Effect.fail(new AppError({ message: "Must reuse existing video" })),
+      renderEpisode: () => Effect.die("The queue publishes single recordings"),
+    }),
   );
   const telegram = Layer.succeed(
     Telegram,
