@@ -80,6 +80,19 @@ const Probe = Schema.Struct({
   format: Schema.Struct({ duration: Schema.String }),
 });
 
+/** Scene backgrounds in file-name order; a post without photos uses `message_id % length`. */
+export const listBackgrounds = Effect.gen(function* () {
+  const backgrounds = yield* attempt("List video backgrounds", async () =>
+    (await readdir(Paths.backgrounds))
+      .filter((name) => name.endsWith(".jpg"))
+      .sort()
+      .map((name) => join(Paths.backgrounds, name)),
+  );
+  if (backgrounds.length === 0)
+    return yield* new AppError({ message: "No video backgrounds in assets/backgrounds" });
+  return backgrounds;
+});
+
 export class Media extends Context.Service<
   Media,
   {
@@ -96,14 +109,7 @@ export class Media extends Context.Service<
       const config = yield* Settings;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const postCard = yield* PostCard;
-      const backgrounds = yield* attempt("List video backgrounds", async () =>
-        (await readdir(Paths.backgrounds))
-          .filter((name) => name.endsWith(".jpg"))
-          .sort()
-          .map((name) => join(Paths.backgrounds, name)),
-      );
-      if (backgrounds.length === 0)
-        return yield* new AppError({ message: "No video backgrounds in assets/backgrounds" });
+      const backgrounds = yield* listBackgrounds;
       // Collect output through Effect streams so child pipes cannot block each other.
       const execute = Effect.fn("Media.execute")(function* (
         binary: string,

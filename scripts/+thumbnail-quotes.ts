@@ -11,11 +11,12 @@ import {
   thumbnailReviewPrompt,
 } from "../src/thumbnail-quote.ts";
 import { ModelProxy, topicModel } from "../src/model.ts";
+import { ThumbnailRowFields } from "../src/thumbnail.ts";
 
 const Source = Schema.Struct({
   rows: Schema.Array(
     Schema.Struct({
-      video: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{11}$/)),
+      ...ThumbnailRowFields,
       originalTitle: Schema.String,
       transcript: Schema.String.check(Schema.isMinLength(10), Schema.isMaxLength(200_000)),
     }),
@@ -46,6 +47,8 @@ const program = Effect.gen(function* () {
         const thumbnailQuote = yield* service.generate(row.transcript);
         const result = {
           video: row.video,
+          messageId: row.messageId,
+          publishedAt: row.publishedAt,
           title: row.originalTitle,
           thumbnailQuote,
           model,

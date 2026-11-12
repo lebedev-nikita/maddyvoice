@@ -205,7 +205,11 @@ const applyThumbnail = Effect.fn("applyThumbnail")(function* (
   if (item.thumbnail_applied_quote === text) return;
   const thumbnails = yield* Thumbnails;
   const { dataDir } = yield* Settings;
-  const path = yield* thumbnails.render(text, join(dataDir, "thumbnails", `${job.id}.png`));
+  const path = yield* thumbnails.render(
+    text,
+    { messageId: Number(job.message_id), publishedAt: job.published_at },
+    join(dataDir, "thumbnails", `${job.id}.png`),
+  );
   const png = yield* attempt("Read rendered thumbnail", () => readFile(path));
   const client = yield* (yield* YouTube).load();
   yield* attempt("Apply generated YouTube thumbnail", (signal) =>

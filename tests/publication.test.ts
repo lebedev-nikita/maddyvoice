@@ -143,7 +143,7 @@ async function fixture(client = new Client(), metadataReady = true) {
   const thumbnails = Layer.succeed(
     Thumbnails,
     Thumbnails.of({
-      render: (_quote, destination) =>
+      render: (_quote, _recording, destination) =>
         attempt("Render fixture thumbnail", async () => {
           metadata.renders++;
           if (metadata.renderFailure) throw new Error("FFmpeg thumbnail render failed");

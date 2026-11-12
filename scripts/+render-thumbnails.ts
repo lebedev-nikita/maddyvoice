@@ -3,13 +3,13 @@ import { Effect, Schema } from "effect";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { attempt } from "../src/core.ts";
-import { renderThumbnail } from "../src/thumbnail.ts";
+import { attempt, Settings } from "../src/core.ts";
+import { renderThumbnail, ThumbnailRowFields } from "../src/thumbnail.ts";
 
 const Quotes = Schema.Struct({
   rows: Schema.Array(
     Schema.Struct({
-      video: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{11}$/)),
+      ...ThumbnailRowFields,
       thumbnailQuote: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     }),
   ),
@@ -31,9 +31,10 @@ const program = Effect.gen(function* () {
     const started = performance.now();
     const path = yield* renderThumbnail(
       row.thumbnailQuote,
+      { messageId: row.messageId, publishedAt: row.publishedAt },
       join(resolve(values.output), `${row.video}.png`),
     );
     yield* Effect.logInfo(`${row.video}: ${Math.round(performance.now() - started)} ms -> ${path}`);
   }
-}).pipe(Effect.provide(BunServices.layer));
+}).pipe(Effect.provide(Settings.layer), Effect.provide(BunServices.layer));
 BunRuntime.runMain(program);

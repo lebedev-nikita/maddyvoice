@@ -271,14 +271,48 @@ try {
     Effect.gen(function* () {
       return yield* (yield* Thumbnails).render(
         "Большой рассказ",
+        { messageId: 2, publishedAt: "2026-10-26T01:02:03.000Z" },
         join(directory, "thumbnails", "quote.png"),
       );
-    }).pipe(Effect.provide(Thumbnails.layer), Effect.provide(BunServices.layer)),
+    }).pipe(
+      Effect.provide(
+        Thumbnails.layer.pipe(Layer.provide(settings), Layer.provide(BunServices.layer)),
+      ),
+    ),
   );
   const image = await readFile(thumbnail);
   assert(image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])));
   assert.equal(image.readUInt32BE(16), 1280);
   assert.equal(image.readUInt32BE(20), 720);
+  // Right padding of the white post card, then the scene behind the portrait's hair.
+  const thumbnailPixels = await Promise.all(
+    ["crop=1:1:1215:360", "crop=1:1:20:20"].map((crop) =>
+      exec(
+        ffmpeg,
+        [
+          "-nostdin",
+          "-v",
+          "error",
+          "-i",
+          thumbnail,
+          "-vf",
+          `format=rgb24,${crop}`,
+          "-f",
+          "rawvideo",
+          "pipe:1",
+        ],
+        { encoding: "buffer" },
+      ).then(({ stdout }) => [...stdout]),
+    ),
+  );
+  assert(
+    thumbnailPixels[0]!.every((channel) => channel > 245),
+    "The thumbnail quote sits on a white card",
+  );
+  assert(
+    !thumbnailPixels[1]!.every((channel) => channel > 230),
+    "The thumbnail shows the video scene",
+  );
   console.log(
     "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, H.264 1080p30 + AAC, full duration, quote thumbnail",
   );

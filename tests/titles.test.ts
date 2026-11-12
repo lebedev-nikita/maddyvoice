@@ -70,7 +70,7 @@ async function fixture(
       Thumbnails,
       Thumbnails.of(
         renderer ?? {
-          render: (quote, destination) =>
+          render: (quote, _recording, destination) =>
             attempt("Render test thumbnail", async () => {
               expect(quote).toBe("Большой рассказ");
               await mkdir(join(dataDir, "thumbnails"), { recursive: true });
