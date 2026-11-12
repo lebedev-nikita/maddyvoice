@@ -120,7 +120,7 @@ below. Existing YouTube publication dates cannot be reordered by a code update.
 
 ## Install FFmpeg
 
-Thumbnails need FFmpeg 6.1+, and Debian bookworm ships 5.1. The publisher uses
+The publisher uses FFmpeg 6.1+, and Debian bookworm ships 5.1. The publisher uses
 a checksum-verified [BtbN](https://github.com/BtbN/FFmpeg-Builds) ARM64 GPL build
 instead; the system package stays installed for other software. On the Pi:
 
@@ -149,7 +149,7 @@ Restart the publisher after changing the build. To roll back, point the
 ## Install Chromium
 
 The publisher renders each video's Telegram-style post card once with headless
-Chromium, then animates it with FFmpeg. Install Debian's package on the Pi:
+Chromium, then animates it with FFmpeg. Thumbnails are rendered with Chromium too. Install Debian's package on the Pi:
 
 ```sh
 sudo apt-get install -y chromium

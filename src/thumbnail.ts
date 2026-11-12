@@ -1,9 +1,11 @@
-import { Config, Context, Effect, Layer, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { Context, Effect, Layer, Schema } from "effect";
+import { ChildProcessSpawner } from "effect/process";
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { AppError, attempt, Paths } from "./core.ts";
+import { escapeHtml, openPage } from "./browser.ts";
+import { AppError, attempt, Paths, Settings } from "./core.ts";
+import { listBackgrounds } from "./media.ts";
 
 // YouTube rejects thumbnails with Russian obscenities. Each pattern captures the root;
 // the offset names the root letter replaced by a star.
@@ -54,94 +56,132 @@ export function thumbnailLines(quote: string) {
   return lines;
 }
 
+/** The recording a thumbnail belongs to: its post picks the video's background. */
+export type ThumbnailRecording = { readonly messageId: number; readonly publishedAt: string };
+
+/** Fields identifying a video and its recording in local thumbnail batch files. */
+export const ThumbnailRowFields = {
+  video: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{11}$/)),
+  messageId: Schema.Int.check(Schema.isGreaterThan(0)),
+  publishedAt: Schema.String,
+};
+
+const moscowDate = new Intl.DateTimeFormat("ru-RU", {
+  timeZone: "Europe/Moscow",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+/** Decorative voice-message bars, stable per post; the first 40% are played. */
+function waveform(messageId: number) {
+  let seed = (messageId % 2147483646) + 1;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  return Array.from({ length: 34 }, (_, index) => {
+    const level = 0.18 + (0.82 * Math.abs(Math.sin(index * 0.37) * 0.6 + random() * 0.55)) / 1.15;
+    const color = index / 34 < 0.4 ? "#40a7e3" : "#c9dbe8";
+    return `<i style="height:${Math.max(5, Math.round(level * 40))}px;background:${color}"></i>`;
+  }).join("");
+}
+
+type ThumbnailImages = {
+  readonly background: string;
+  readonly logo: string;
+  readonly oswald: string;
+  readonly roboto: string;
+};
+
+/** The video's scene with its Telegram card enlarged; the quote replaces the post text. */
+function thumbnailHtml(
+  lines: readonly string[],
+  recording: ThumbnailRecording,
+  images: ThumbnailImages,
+): string {
+  const longest = Math.max(...lines.map((line) => Array.from(line).length));
+  const fontSize = Math.min(92, Math.floor(470 / (longest * 0.56)));
+  const date = moscowDate.format(Date.parse(recording.publishedAt)).replace(/\s*г\.$/u, "");
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+@font-face { font-family: Oswald; src: url("${images.oswald}"); }
+@font-face { font-family: Roboto; src: url("${images.roboto}"); font-weight: 100 900; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1280px; height: 720px; overflow: hidden; -webkit-font-smoothing: antialiased; }
+.scene { position: absolute; inset: 0; background: url("${images.background}") -36px -40px / 1440px 810px; }
+.bubble { position: absolute; right: 48px; top: 50%; width: 560px; padding: 26px 32px 22px;
+  transform: translateY(-50%) rotate(-1.2deg); background: #fff; border-radius: 30px;
+  box-shadow: 0 18px 60px rgba(0,0,0,.42), 0 2px 6px rgba(0,0,0,.18); }
+.author { display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+  font: 600 25px Roboto; color: #3a8bc8; }
+.author img { width: 46px; height: 46px; border-radius: 50%; }
+.voice { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+.play { width: 64px; height: 64px; border-radius: 50%; background: #40a7e3; flex: none;
+  display: grid; place-items: center; }
+.wave { display: flex; align-items: center; gap: 5px; height: 40px; }
+.wave i { display: block; width: 5px; border-radius: 5px; }
+.quote { font: ${fontSize}px/1.06 Oswald; color: #111; text-transform: uppercase; white-space: nowrap; }
+.footer { display: flex; justify-content: flex-end; margin-top: 10px; font: 20px Roboto; color: #a0acb6; }
+</style></head><body>
+<div class="scene"></div>
+<div class="bubble">
+  <div class="author"><img src="${images.logo}">Maddyvoice</div>
+  <div class="voice"><div class="play"><svg width="27" height="27" viewBox="0 0 24 24"><path fill="#fff" d="M7 4.5v15l13-7.5z"/></svg></div>
+    <div class="wave">${waveform(recording.messageId)}</div></div>
+  <div class="quote">${lines.map(escapeHtml).join("<br>")}</div>
+  <div class="footer">голосовое · ${escapeHtml(date)}</div>
+</div>
+</body></html>`;
+}
+
+// Shrinks the quote until every line fits the bubble and the bubble fits the frame.
+const fitScript = `(() => {
+  const quote = document.querySelector(".quote"), bubble = document.querySelector(".bubble");
+  let size = parseFloat(getComputedStyle(quote).fontSize);
+  while (size > 32 && (quote.scrollWidth > quote.clientWidth || bubble.offsetHeight > 640))
+    quote.style.fontSize = --size + "px";
+  return size > 32;
+})()`;
+
+const dataUri = async (path: string, type: string) =>
+  `data:${type};base64,${(await readFile(path)).toString("base64")}`;
+
 export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
   quote: string,
+  recording: ThumbnailRecording,
   destination: string,
 ) {
-  const binary = yield* Config.String("FFMPEG_PATH").pipe(Config.withDefault("ffmpeg"));
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const displayQuote = thumbnailText(quote);
   const lines = thumbnailLines(displayQuote);
   if (!displayQuote || lines.length > 4)
     return yield* new AppError({ message: "Thumbnail requires a short nonempty quote" });
+  const backgrounds = yield* listBackgrounds;
   const work = yield* Effect.acquireRelease(
     attempt("Create thumbnail workspace", () => mkdtemp(join(tmpdir(), "maddyvoice-thumbnail-"))),
     (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
   );
-  const longest = Math.max(...lines.map((line) => Array.from(line).length));
-  const fontSize = Math.min(82, Math.floor(440 / (longest * 0.56)));
-  const lineHeight = Math.ceil(fontSize * 1.22);
-  const top = Math.round((720 - lineHeight * lines.length) / 2);
-  yield* attempt("Prepare thumbnail text and font", async () => {
-    await copyFile(Paths.portrait, join(work, "portrait.jpg"));
-    await copyFile(Paths.thumbnailFont, join(work, "font.ttf"));
-    for (const [index, line] of lines.entries())
-      await writeFile(join(work, `line-${index}.txt`), line, { mode: 0o600 });
-    await writeFile(join(work, "brand.txt"), "MADDYVOICE", { mode: 0o600 });
-  });
-  // Font metrics keep line spacing even when a line lacks ascenders; requires FFmpeg 6.1.
-  // Oswald's ascent sits above its capitals, so lift lines to align capitals with the layout.
-  const capitalOffset = Math.round(fontSize * 0.36);
-  const text = lines.map(
-    (_, index) =>
-      `drawtext=fontfile=font.ttf:textfile=line-${index}.txt:expansion=none:` +
-      `fontcolor=0x1b1f1a:fontsize=${fontSize}:x=64:y=${top - capitalOffset + index * lineHeight}:y_align=font`,
-  );
-  // A light card fades into the portrait; a short olive rule marks the quote.
-  const filter =
-    `[0:v]scale=880:720:force_original_aspect_ratio=increase,` +
-    `crop=828:720:(iw-880)*0.39:(ih-oh)*0.44,eq=saturation=0.8:brightness=0.03,` +
-    `pad=1280:720:452:0:color=0xf1eee4,setsar=1,split[photo][mask];` +
-    `[mask]format=rgba,geq=r=241:g=238:b=228:a='255*clip((760-X)/300,0,1)'[shade];` +
-    `[photo][shade]overlay,drawbox=x=66:y=${top - 26}:w=56:h=6:color=0x8a9a1c:t=fill,` +
-    `${text.join(",")},` +
-    `drawtext=fontfile=font.ttf:textfile=brand.txt:expansion=none:fontcolor=0x1b1f1a@0.55:fontsize=22:x=68:y=660`;
-  const process = yield* spawner
-    .spawn(
-      ChildProcess.make(
-        binary,
-        [
-          "-nostdin",
-          "-v",
-          "error",
-          "-y",
-          "-filter_complex_threads",
-          "2",
-          "-i",
-          "portrait.jpg",
-          "-filter_complex",
-          filter,
-          "-frames:v",
-          "1",
-          "-threads",
-          "2",
-          "thumbnail.png",
-        ],
-        { cwd: work },
-      ),
-    )
-    .pipe(
-      Effect.mapError(
-        () =>
-          new AppError({
-            message: "Thumbnail render failed; requires FFmpeg 6.1+ with drawtext and geq filters",
-          }),
-      ),
-    );
-  const [output, code] = yield* Effect.all(
-    [process.all.pipe(Stream.decodeText(), Stream.mkString), process.exitCode],
-    { concurrency: "unbounded" },
-  ).pipe(Effect.mapError(() => new AppError({ message: "Cannot read thumbnail FFmpeg output" })));
-  if (Number(code) !== 0)
-    return yield* new AppError({
-      message: `Thumbnail FFmpeg exited ${code}; requires FFmpeg 6.1+ with drawtext and geq: ${output.slice(-1000)}`,
+  const images = yield* attempt("Read thumbnail images and fonts", async () => ({
+    background: await dataUri(backgrounds[recording.messageId % backgrounds.length]!, "image/jpeg"),
+    logo: await dataUri(Paths.channelLogo, "image/png"),
+    oswald: await dataUri(Paths.thumbnailFont, "font/ttf"),
+    roboto: await dataUri(Paths.cardFont, "font/ttf"),
+  }));
+  const page = yield* openPage(work);
+  const output = join(work, "thumbnail.png");
+  yield* attempt("Render thumbnail", async () => {
+    await page.send("Emulation.setDeviceMetricsOverride", {
+      width: 1280,
+      height: 720,
+      deviceScaleFactor: 1,
+      mobile: false,
     });
+    await page.load(thumbnailHtml(lines, recording, images));
+    if (!(await page.evaluate(fitScript))) throw new Error("Quote does not fit the thumbnail");
+    await page.screenshot(output, 1280, 720);
+  });
   yield* attempt("Save thumbnail", async () => {
     await mkdir(dirname(destination), { recursive: true });
     // The staging file is placed beside the destination for an atomic rename across filesystems.
     const staging = join(dirname(destination), `.${work.split("/").at(-1)}.png`);
     try {
-      await copyFile(join(work, "thumbnail.png"), staging);
+      await copyFile(output, staging);
       await rename(staging, destination);
     } finally {
       await rm(staging, { force: true });
@@ -152,15 +192,23 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
 
 export class Thumbnails extends Context.Service<
   Thumbnails,
-  { render(quote: string, destination: string): Effect.Effect<string, AppError> }
+  {
+    render(
+      quote: string,
+      recording: ThumbnailRecording,
+      destination: string,
+    ): Effect.Effect<string, AppError>;
+  }
 >()("maddyvoice/Thumbnails") {
   static readonly layer = Layer.effect(
     Thumbnails,
     Effect.gen(function* () {
+      const settings = yield* Settings;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       return Thumbnails.of({
-        render: (quote, destination) =>
-          renderThumbnail(quote, destination).pipe(
+        render: (quote, recording, destination) =>
+          renderThumbnail(quote, recording, destination).pipe(
+            Effect.provideService(Settings, settings),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.mapError((error) => new AppError({ message: error.message })),
           ),

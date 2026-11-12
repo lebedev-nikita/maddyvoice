@@ -3,14 +3,16 @@ AI-restored and upscaled from 1280 × 853 to 1620 × 1080 pixels.
 [Original image](https://click-or-die.ru/app/uploads/2025/06/photo_2024-07-31_13-33-46.jpg) ·
 [Source article](https://click-or-die.ru/2025/06/ilya-meddison-vzyal-pereryv-ot-strimov-legenda-youtube-nazvala-uslovie-pri-kotorom-vernetsya-k-videoigram/).
 
-Used as the source portrait for thumbnails.
+Used as the source portrait for the backgrounds.
 No Creative Commons license is asserted for it.
 
 `backgrounds/`: twelve 1920 × 1080 AI-generated American scenes with the same
 portrait on the left. A voice post without attached photos uses the background
 at index `message_id % 12` in file-name order, so adding or removing a file
-changes the rotation for newly rendered videos. The right side stays clear for
-the post card.
+changes the rotation for newly rendered videos and thumbnails. The right side
+stays clear for the post card.
+
+`channel-logo.png`: the channel avatar, shown in the thumbnail's voice card.
 
 `video-overlay.png`: the approved 1920 × 240 transparent lower-edge artwork,
 including a soft shade, monochrome YouTube icon and `@MaddyvoiceArchive` handle.

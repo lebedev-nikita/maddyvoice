@@ -19,7 +19,7 @@ export function safeMessage(cause: unknown): string {
 }
 
 export const Paths = {
-  portrait: fileURLToPath(new URL("../assets/ilya-maddyson.jpg", import.meta.url)),
+  channelLogo: fileURLToPath(new URL("../assets/channel-logo.png", import.meta.url)),
   videoOverlay: fileURLToPath(new URL("../assets/video-overlay.png", import.meta.url)),
   thumbnailFont: fileURLToPath(new URL("../assets/fonts/Oswald-Bold.ttf", import.meta.url)),
   cardFont: fileURLToPath(new URL("../assets/fonts/Roboto.ttf", import.meta.url)),

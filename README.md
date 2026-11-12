@@ -330,7 +330,8 @@ Studio's feature eligibility. OAuth authorization alone does not enable them;
 YouTube's permission refusal is saved in the metadata error for diagnosis.
 
 To generate quotes from saved transcripts without changing YouTube, provide a
-JSON object with `rows`, each containing `video`, `originalTitle` and `transcript`:
+JSON object with `rows`, each containing `video`, the Telegram `messageId`, the post's
+ISO `publishedAt`, `originalTitle` and `transcript`:
 
 ```sh
 bun scripts/+thumbnail-quotes.ts --source sources.json --output data/thumbnail-quotes
@@ -339,9 +340,10 @@ bun scripts/+render-thumbnails.ts --quotes data/thumbnail-quotes/quotes.json --o
 
 The first command uses the production quote generator and independent review,
 saving each approved result and input/prompt hashes. It sends no expected answer
-to the model. The second renders 1280×720 PNGs with FFmpeg and the bundled Oswald
-font, without a browser. FFmpeg 6.1+ needs `drawtext` and `geq`; select a suitable build
-with `FFMPEG_PATH`. Rendering is sequential and limits FFmpeg to two threads.
+to the model. The second renders 1280×720 PNGs sequentially with headless Chromium.
+A thumbnail shows the video's background for the post (`messageId % 12`, ignoring
+attached photos) with an enlarged Telegram voice card in which the quote, set in the
+bundled Oswald font, replaces the post text. The card's waveform is decorative.
 These commands create local files. To update an explicit batch of existing videos,
 run `bun run thumbnail:apply --manifest data/thumbnail-batch/manifest.json`.
 The manifest contains `channelId` and `rows` with `jobId`, `video` and `sha256`;
