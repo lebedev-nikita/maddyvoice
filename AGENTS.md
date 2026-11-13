@@ -28,8 +28,7 @@ uses the Responses API of a CLIProxyAPI instance (`OPENAI_BASE_URL`,
 the topic server, `scripts/+thumbnail-quotes.ts` or `scripts/+comment-title-check.ts`
 spends the proxy's Codex usage limits.
 
-`preview-episode` also places text posts through `ModelProxy`, and transcribes
-voices through the OpenAI API itself (`Transcriber` in `src/transcription.ts`,
-`OPENAI_TRANSCRIPTION_API_KEY`). That key is restricted to `/v1/audio` and is
-never sent to the proxy; each new voice costs money once, then its transcript is
-read from `DATA_DIR/transcripts`.
+`preview-episode` transcribes voices through the OpenAI API itself
+(`Transcriber` in `src/transcription.ts`, `OPENAI_TRANSCRIPTION_API_KEY`). That
+key is restricted to `/v1/audio` and is never sent to the proxy; each new voice
+costs money once, then its transcript is read from `DATA_DIR/transcripts`.

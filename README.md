@@ -55,24 +55,19 @@ bun run cli preview-episode 7779
 
 The command finds the episode containing that voice, reading the feed in both
 directions until six hours without voices lie on each side, and writes
-`data/videos/preview-episode-<first voice id>.mp4`. It prints the start of every
-voice in seconds, the text posts shown with it and the posts left out;
-`complete` is `false` while later voices may still join the episode.
+`data/videos/preview-episode-<first voice id>.mp4`. Every voice keeps its own
+card, caption and photos; the card marks its place in the episode (`3 / 14`).
+Voices without photos share one scene, chosen by the video's number so that
+consecutive videos differ; the preview uses the first voice's id as that
+number. Text posts between the voices are not shown.
 
-Text posts published from three hours before the first voice to three hours
-after the last are shown on the card under the voice they belong to by meaning,
-one at a time; posts longer than 700 characters take several pages. Screen time
-is divided by text length. A post's photos come first, in a bubble of their own
-laid out like a Telegram album, so the scene behind the card stays the voice's.
-Forwarded posts, posts without text, obvious third-party advertising and posts
-unrelated to every voice are left out; Maddyson's own streams and projects stay.
-
-Meaning comes from transcripts. Each voice is transcribed once through the
-OpenAI API (`OPENAI_TRANSCRIPTION_API_KEY`, a key restricted to `/v1/audio`;
+The command prints the start of every voice in seconds, for chapters, and its
+transcript; `complete` is `false` while later voices may still join the
+episode. Each voice is transcribed once through the OpenAI API
+(`OPENAI_TRANSCRIPTION_API_KEY`, a key restricted to `/v1/audio`;
 `TRANSCRIPTION_MODEL` defaults to `gpt-4o-transcribe`) and saved under
-`data/transcripts/`. A model then places the posts through the same proxy as the
-topic service (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `TOPIC_MODEL`). The preview
-reads no queue and uploads nothing.
+`data/transcripts/`, for titles that will no longer wait for YouTube captions.
+The preview reads no queue and uploads nothing.
 
 ## Connect a new YouTube channel
 

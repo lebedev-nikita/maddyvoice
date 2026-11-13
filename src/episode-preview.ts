@@ -1,6 +1,6 @@
 import { DateTime, Effect } from "effect";
 import { AppError, json } from "./core.ts";
-import { episodeGapMs, groupEpisodes, TextPlacer } from "./episode.ts";
+import { episodeGapMs, groupEpisodes } from "./episode.ts";
 import { Media } from "./media.ts";
 import { Telegram, type Post } from "./telegram.ts";
 import { Transcriber } from "./transcription.ts";
@@ -10,14 +10,14 @@ const time = (post: Post) => Date.parse(post.date);
 /** The episode containing a voice among the posts read so far, with the edges of both. */
 function episodeOf(posts: Iterable<Post>, messageId: number) {
   const feed = [...posts].sort((a, b) => a.id - b.id);
-  const episode = groupEpisodes(feed).find((item) =>
-    item.recordings.some((recording) => recording.post.id === messageId),
+  const episode = groupEpisodes(feed).find((recordings) =>
+    recordings.some((recording) => recording.post.id === messageId),
   );
   return (
     episode && {
       episode,
-      first: time(episode.recordings[0]!.post),
-      last: time(episode.recordings.at(-1)!.post),
+      first: time(episode[0]!.post),
+      last: time(episode.at(-1)!.post),
       oldest: feed[0]!,
       latest: feed.at(-1)!,
     }
@@ -77,19 +77,14 @@ export const episodeAround = Effect.fn("episodeAround")(function* (messageId: nu
 export const previewEpisode = Effect.fn("previewEpisode")(function* (messageId: number) {
   const media = yield* Media;
   const transcriber = yield* Transcriber;
-  const placer = yield* TextPlacer;
   const { episode, complete } = yield* episodeAround(messageId);
-  const voices = yield* Effect.forEach(episode.recordings, (recording) =>
-    transcriber
-      .transcribe(recording.post, recording.audioIndex)
-      .pipe(Effect.map((transcript) => ({ ...recording, transcript }))),
+  const transcripts = yield* Effect.forEach(episode, (recording) =>
+    transcriber.transcribe(recording.post, recording.audioIndex),
   );
-  const { shown, skipped } = yield* placer.place(voices, episode.texts);
-  const first = voices[0]!;
-  const result = yield* media.renderEpisode(
-    voices.map((voice, index) => ({ ...voice, texts: shown[index] ?? [] })),
-    `preview-episode-${first.post.id}`,
-  );
+  const first = episode[0]!.post;
+  // Published episodes will take the scene from their own number; until then the first
+  // voice stands in for it.
+  const result = yield* media.renderEpisode(episode, first.id, `preview-episode-${first.id}`);
   console.log(
     json({
       path: result.path,
@@ -97,14 +92,12 @@ export const previewEpisode = Effect.fn("previewEpisode")(function* (messageId: 
       size: result.size,
       duration: result.duration,
       complete,
-      voices: voices.map((voice, index) => ({
-        source: voice.post.url,
-        publishedAt: voice.post.date,
+      voices: episode.map((recording, index) => ({
+        source: recording.post.url,
+        publishedAt: recording.post.date,
         start: result.starts[index],
-        transcript: voice.transcript,
-        texts: (shown[index] ?? []).map((post) => post.url),
+        transcript: transcripts[index],
       })),
-      skipped: skipped.map(({ post, reason }) => ({ source: post.url, reason })),
     }),
   );
 });

@@ -5,10 +5,8 @@ import { Argument, Command, Flag } from "effect/cli";
 import { mkdir } from "node:fs/promises";
 import { attempt, json, Settings } from "./core.ts";
 import { getCursor, listJobs, Store, withWorkerLock } from "./database.ts";
-import { TextPlacer } from "./episode.ts";
 import { previewEpisode } from "./episode-preview.ts";
 import { Media } from "./media.ts";
-import { ModelProxy } from "./model.ts";
 import { manageService } from "./service.ts";
 import { Telegram } from "./telegram.ts";
 import {
@@ -164,20 +162,18 @@ const preview = Command.make(
 );
 
 // An episode preview reads no queue and publishes nothing; it needs the transcription key
-// and the model proxy instead of the database and YouTube.
-const episodeServices = Layer.mergeAll(
-  Telegram.layer,
-  Media.layer,
-  Transcriber.layer,
-  TextPlacer.layer.pipe(Layer.provide(ModelProxy.layer)),
-).pipe(Layer.provideMerge(Settings.layer), Layer.provideMerge(BunServices.layer));
+// instead of the database and YouTube.
+const episodeServices = Layer.mergeAll(Telegram.layer, Media.layer, Transcriber.layer).pipe(
+  Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(BunServices.layer),
+);
 const episodePreview = Command.make(
   "preview-episode",
   { message: Argument.Int("message-id").pipe(Argument.withSchema(positive)) },
   ({ message }) => previewEpisode(message).pipe(Effect.provide(episodeServices)),
 ).pipe(
   Command.withDescription(
-    "Render the episode containing a voice to a local MP4: its voices in order with their text posts",
+    "Render the episode containing a voice to a local MP4: its voices in order, each with its transcript",
   ),
 );
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { cardHtml, textPages, textSlides } from "../src/post-card.ts";
+import { cardHtml } from "../src/post-card.ts";
 import type { Post } from "../src/telegram.ts";
 
 const post: Post = {
@@ -34,88 +34,14 @@ describe("post card markup", () => {
     expect(html).toContain('class="reaction paid"');
   });
 
+  it("marks the voice's place in an episode", () => {
+    const images = { avatar: "", reactions: ["", ""] };
+    expect(cardHtml(post, 0, images, "", "2 / 5")).toContain('<span class="position">2 / 5</span>');
+    expect(cardHtml(post, 0, images, "")).not.toContain('class="position"');
+  });
+
   it("falls back to the emoji glyph when no image is available", () => {
     const html = cardHtml(post, 0, { avatar: "", reactions: ["", ""] }, "");
     expect(html).toContain('<span class="glyph">❤</span>2.1K');
-  });
-});
-
-describe("text post slides", () => {
-  const text: Post = { ...post, id: 8, text: "Пост <i>рядом</i>", audio: [], card: undefined };
-
-  it("keeps a short post on one page and splits a long one between paragraphs", () => {
-    expect(textPages("  Коротко\n\nи ясно ")).toEqual(["Коротко\n\nи ясно"]);
-    const paragraph = "Абзац текста. ".repeat(20).trim();
-    const pages = textPages([paragraph, paragraph, paragraph, paragraph].join("\n\n"), 700);
-    expect(pages).toEqual([`${paragraph}\n\n${paragraph}`, `${paragraph}\n\n${paragraph}`]);
-  });
-
-  it("leaves no stray last paragraph on a page of its own", () => {
-    const [first, second, tail] = ["а".repeat(470), "б".repeat(412), "Пссс. И ещё строка."];
-    expect(textPages([first, second, tail].join("\n\n"), 700)).toEqual([
-      first,
-      `${second}\n\n${tail}`,
-    ]);
-    expect(textPages("  ")).toEqual([]);
-  });
-
-  it("splits an oversized paragraph at sentences, then words, and loses no text", () => {
-    const sentence = "Это довольно длинное предложение без единой точки внутри";
-    const long = `${Array.from({ length: 30 }, () => `${sentence}.`).join(" ")}\n${"слово ".repeat(200).trim()}`;
-    const pages = textPages(long, 300);
-    expect(pages.length).toBeGreaterThan(5);
-    expect(pages.every((page) => page.length <= 300)).toBe(true);
-    expect(pages.slice(0, 3).every((page) => page.endsWith("."))).toBe(true);
-    expect(pages.join(" ").replace(/\s+/g, " ")).toBe(long.replace(/\s+/g, " "));
-  });
-
-  it("numbers the pages of each post", () => {
-    const long = { ...text, id: 9, text: "Длинное предложение. ".repeat(60) };
-    expect(
-      textSlides([text, long]).map((slide) => [slide.post.id, slide.page, slide.pages]),
-    ).toEqual([
-      [8, 1, 1],
-      [9, 1, 2],
-      [9, 2, 2],
-    ]);
-  });
-
-  it("adds one bubble per slide under the voice and marks the episode position", () => {
-    const long = { ...text, id: 9, text: "Длинное предложение. ".repeat(60) };
-    const html = cardHtml(
-      post,
-      0,
-      { avatar: "", reactions: ["", ""] },
-      "",
-      textSlides([text, long]),
-      "2 / 5",
-    );
-    expect(html.match(/class="bubble post"/g)).toHaveLength(3);
-    expect(html).toContain("<p>Пост &#60;i&#62;рядом&#60;/i&#62;</p>");
-    expect(html).toContain('<span class="page">1 / 2</span>');
-    expect(html).toContain('<span class="position">2 / 5</span>');
-    expect(html.indexOf('class="voice"')).toBeLessThan(html.indexOf('class="bubble post"'));
-    const alone = cardHtml(post, 0, { avatar: "", reactions: ["", ""] }, "");
-    expect(alone).not.toContain('class="bubble post"');
-    expect(alone).not.toContain('class="position"');
-  });
-
-  it("shows a post's photos in a bubble of their own before its text, in rows of three", () => {
-    const photos = ["a", "b", "c", "d", "e"].map((name) => `data:image/png;base64,${name}`);
-    const long = { ...text, text: "Длинное предложение. ".repeat(60), images: photos };
-    const slides = textSlides([long]);
-    expect(slides.map((slide) => [slide.photos.length, slide.page, slide.pages])).toEqual([
-      [5, 0, 0],
-      [0, 1, 2],
-      [0, 2, 2],
-    ]);
-    const html = cardHtml(post, 0, { avatar: "", reactions: ["", ""] }, "", slides);
-    const bubbles = html.split('<div class="bubble post').slice(1);
-    expect(bubbles).toHaveLength(3);
-    expect(bubbles[0]).toMatch(/^ photos">/);
-    expect(bubbles[0]!.match(/class="row"/g)).toHaveLength(2);
-    expect(bubbles[0]!.match(/<img /g)).toHaveLength(5);
-    expect(bubbles[0]).not.toContain('class="text"');
-    expect(bubbles.slice(1).join("")).not.toContain("<img ");
   });
 });
