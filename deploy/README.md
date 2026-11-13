@@ -243,9 +243,9 @@ ssh pi sudo -u maddyvoice /opt/maddyvoice/deploy/maddyvoice names export > data/
 bun run cli names merge data/name-additions.json
 ```
 
-The export can run while the publisher works. After the reviewed file is deployed, the publisher marks the moved names and
-rejects the names removed from the file. Reject an addition that should not
-reach the file on the Pi:
+The export can run while the publisher works. After the reviewed file is
+deployed, the publisher marks the moved names and rejects the names removed from
+the file. Reject an addition that should not reach the file on the Pi:
 
 ```sh
 sudo -u maddyvoice /opt/maddyvoice/deploy/maddyvoice names reject 'Name'
