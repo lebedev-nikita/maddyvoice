@@ -121,11 +121,10 @@ async function fixture(answer: (texts: readonly string[]) => unknown) {
       json: (request) =>
         Effect.sync(() => {
           prompts.push(request.prompt);
-          const texts = Schema.decodeUnknownSync(
-            Schema.Array(Schema.Struct({ text: Schema.String })),
-          )(JSON.parse(request.prompt.slice(request.prompt.indexOf("\n[") + 1))).map(
-            (item) => item.text,
-          );
+          const { posts } = Schema.decodeUnknownSync(
+            Schema.Struct({ posts: Schema.Array(Schema.Struct({ text: Schema.String })) }),
+          )(JSON.parse(request.prompt.slice(request.prompt.indexOf("\n{") + 1)));
+          const texts = posts.map((item) => item.text);
           return answer(texts);
         }),
     }),
@@ -166,12 +165,12 @@ describe("name additions in the worker's database", () => {
       }),
     );
     expect(f.prompts).toHaveLength(2);
+    const names = decodeNames(JSON.parse(await readFile(Paths.names, "utf8")));
     expect(f.prompts[0]).toBe(
-      extractionPrompt([
-        "Вчера Клюква и Сасавот",
-        "Опять Клюква, а ещё Шкреб",
-        "Там были Сосавот и Путин",
-      ]),
+      extractionPrompt(
+        ["Вчера Клюква и Сасавот", "Опять Клюква, а ещё Шкреб", "Там были Сосавот и Путин"],
+        names.map((entry) => entry.name),
+      ),
     );
     // Сасавот and Сосавот are in the file, Путин in names-rejected.json.
     expect(list).toEqual([
