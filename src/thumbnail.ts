@@ -122,7 +122,7 @@ html, body { width: 1280px; height: 720px; overflow: hidden; -webkit-font-smooth
 </style></head><body>
 <div class="scene"></div>
 <div class="bubble">
-  <div class="author"><img src="${images.logo}">Maddyvoice</div>
+  <div class="author"><img src="${images.logo}">Мэддисон</div>
   <div class="voice"><div class="play"><svg width="27" height="27" viewBox="0 0 24 24"><path fill="#fff" d="M7 4.5v15l13-7.5z"/></svg></div>
     <div class="wave">${waveform(recording.messageId)}</div></div>
   <div class="quote">${lines.map(escapeHtml).join("<br>")}</div>
