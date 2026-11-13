@@ -94,18 +94,27 @@ function respell(ending: string, from: Stem, to: Stem) {
   return to === "hard" ? hard : (softer[to][hard] ?? hard);
 }
 
+/** A heard word in any case: the capture is its ending. */
+function heardPattern(heard: string) {
+  if (adjective(heard)) return `${escape(stem(heard))}(${adjectiveEndings})`;
+  if (!cyrillic.test(heard)) return `${escape(heard)}()`;
+  // A word ending in a vowel or a soft sign is matched with that letter or another ending.
+  if (vowelFinal(heard)) return `${escape(stem(heard))}(${escape(heard.slice(-1))}|${nounEndings})`;
+  return `${escape(heard)}(${nounEndings})?`;
+}
+
 /** How one word of an alias is matched and what replaces it. */
 function wordRule(heard: string, written: string) {
   if (adjective(heard) && adjective(written))
     return {
-      pattern: `${escape(stem(heard))}(${adjectiveEndings})`,
+      pattern: heardPattern(heard),
       replace: (ending: string) => stem(written) + ending.toLocaleLowerCase("ru-RU"),
     };
   // A word declines with its ending only when both spellings decline alike.
   const declines = cyrillic.test(heard) && vowelFinal(heard) === vowelFinal(written);
   if (!declines) return { pattern: `${escape(heard)}()`, replace: () => written };
   return {
-    pattern: `${escape(stem(heard))}(${nounEndings})${vowelFinal(heard) ? "" : "?"}`,
+    pattern: heardPattern(heard),
     // Latin spellings take no Russian endings.
     replace: (ending: string) =>
       cyrillic.test(written)
@@ -117,8 +126,11 @@ function wordRule(heard: string, written: string) {
 function aliasRule(alias: Alias, name: string) {
   const heard = aliasText(alias).split(/\s+/);
   const written = name.split(" ");
-  const words =
-    heard.length === written.length
+  // A Latin name takes no endings, so any declined form of the alias becomes the name.
+  const latin = !cyrillic.test(name) && heard.length !== written.length;
+  const words = latin
+    ? heard.map((word) => ({ pattern: heardPattern(word), replace: () => "" }))
+    : heard.length === written.length
       ? heard.map((word, index) => wordRule(word, written[index]!))
       : [wordRule(heard.join(" "), name)];
   const pattern = new RegExp(
@@ -126,7 +138,9 @@ function aliasRule(alias: Alias, name: string) {
     "giu",
   );
   const correct = (groups: readonly unknown[]) =>
-    words.map((word, index) => word.replace((groups[index] as string) ?? "")).join(" ");
+    latin
+      ? name
+      : words.map((word, index) => word.replace((groups[index] as string) ?? "")).join(" ");
   return { alias, name, length: aliasText(alias).length, pattern, correct };
 }
 

@@ -15,7 +15,9 @@ const names = decodeNames([
   { name: "Сасавот", aliases: ["Сосавот", "Сасыч"] },
   { name: "Галя", aliases: ["Гхаля", "Гхалка"] },
   { name: "Анар Абдулаев", aliases: ["Анал Обдуваев"] },
-  { name: "VJLink", aliases: ["Виджелинк", "Виджей Линк"] },
+  { name: "VJLink", aliases: ["Виджелинк", "Виджей Линк", "Рыжий Демон"] },
+  { name: "Озон", aliases: ["озон"] },
+  { name: "BadComedian", aliases: ["Бед Комедиан"] },
   { name: "Твич", aliases: ["Twitch"] },
   { name: "Давг", aliases: [{ text: "давка", meaning: "Давг — стример" }] },
   { name: "Кологривый", aliases: ["Калогривый"] },
@@ -36,6 +38,9 @@ describe("names dictionary", () => {
   it("writes Latin spellings without endings and Cyrillic ones from Latin", () => {
     expect(autocorrect("по Виджелинку и Виджей Линку на Twitch", names)).toBe(
       "по VJLink и VJLink на Твич",
+    );
+    expect(autocorrect("у Рыжего Демона и Бед Комедиана, а озоны — это Озон", names)).toBe(
+      "у VJLink и BadComedian, а Озоны — это Озон",
     );
   });
 
