@@ -126,31 +126,46 @@ export type EpisodeDescription = {
 
 const utcTime = (iso: string) => iso.replace("T", " ").replace(".000Z", " UTC");
 
+const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+
+/** As much of a caption as fits the remaining bytes, after a line break. */
+function fittingCaption(text: string, budget: number) {
+  let caption = "";
+  let cost = 0;
+  for (const character of text.replace(/[<>]/g, "").trim()) {
+    const next = bytes(character) + (caption ? 0 : 1);
+    if (cost + next > budget) break;
+    cost += next;
+    caption += character;
+  }
+  return { caption, cost };
+}
+
 /**
  * Chapters first, so YouTube reads them, then every original message with its time and as
- * much of its caption as fits YouTube's 5000-byte description.
+ * much of its caption as fits YouTube's 5000-byte description. A very long episode drops
+ * its chapters, then the messages that do not fit, rather than fail to upload.
  */
 function episodeDescription(job: Job, episode: EpisodeDescription) {
   const marker = `\n\n${sourceMarker(job)}`;
-  const head = [
-    ...(episode.chapters.length ? [episode.chapters.join("\n"), ""] : []),
-    `Голосовые сообщения из Телеграм-канала Мэддисона: https://t.me/${job.channel}`,
-  ].join("\n");
+  const channel = `Голосовые сообщения из Телеграм-канала Мэддисона: https://t.me/${job.channel}`;
   const sources = episode.recordings.map(
-    (recording) => `${recording.source_url} — ${utcTime(recording.published_at)}`,
+    (recording) => `\n\n${recording.source_url} — ${utcTime(recording.published_at)}`,
   );
-  let budget = 5000 - Buffer.byteLength(`${head}\n\n${sources.join("\n\n")}${marker}`, "utf8");
-  const blocks = episode.recordings.map((recording, index) => {
-    let caption = "";
-    for (const character of recording.caption.replace(/[<>]/g, "").trim()) {
-      const cost = Buffer.byteLength(character, "utf8") + (caption ? 0 : 1);
-      if (cost > budget) break;
-      budget -= cost;
-      caption += character;
-    }
-    return caption ? `${sources[index]}\n${caption}` : sources[index]!;
+  const chapters = episode.chapters.map((line) => line.replace(/[<>]/g, " ")).join("\n");
+  const withChapters = `${chapters}\n\n${channel}`;
+  const head =
+    chapters && bytes(withChapters + sources.join("") + marker) <= 5000 ? withChapters : channel;
+  let budget = 5000 - bytes(head + marker);
+  // The messages that fit form a prefix; the bytes counted for the rest are given back.
+  const kept = sources.filter((source) => (budget -= bytes(source)) >= 0);
+  budget += sources.slice(kept.length).reduce((sum, source) => sum + bytes(source), 0);
+  const blocks = kept.map((source, index) => {
+    const { caption, cost } = fittingCaption(episode.recordings[index]!.caption, budget);
+    budget -= cost;
+    return caption ? `${source}\n${caption}` : source;
   });
-  return `${head}\n\n${blocks.join("\n\n")}${marker}`;
+  return head + blocks.join("") + marker;
 }
 
 export function videoMetadata(

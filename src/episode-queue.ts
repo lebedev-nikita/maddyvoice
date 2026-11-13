@@ -35,9 +35,14 @@ export const episodeCutover = Effect.fn("episodeCutover")(function* () {
 export const inEpisodes = (job: Job, cutover: bigint | undefined) =>
   cutover !== undefined && job.message_id > cutover;
 
+/** A recording whose upload has begun stays a publication of its own. */
+export const uploadStarted = (job: Job) => job.upload_session !== null || job.youtube_id !== null;
+
 /**
  * Join waiting recordings into episodes once six hours of silence follow them. Recordings
- * keep feed order; consecutive episodes are numbered so each takes the next scene.
+ * keep feed order; consecutive episodes are numbered so each takes the next scene. A
+ * recording already being uploaded (a catch-up or a resolved video) is never absorbed: it
+ * ends the run before it and is published alone.
  */
 export const formEpisodes = Effect.fn("formEpisodes")(function* (now: DateTime.Utc) {
   const cutover = yield* episodeCutover();
@@ -46,19 +51,26 @@ export const formEpisodes = Effect.fn("formEpisodes")(function* (now: DateTime.U
     (job) => inEpisodes(job, cutover) && job.episode_id === null && job.status !== "uploaded",
   );
   const groups: Job[][] = [];
+  let current: Job[] = [];
   let last = -Infinity;
   for (const job of waiting) {
     const time = Date.parse(job.published_at);
-    if (time - last >= episodeGapMs) groups.push([]);
-    groups.at(-1)!.push(job);
+    if (uploadStarted(job) || time - last >= episodeGapMs) {
+      if (current.length) groups.push(current);
+      current = [];
+    }
+    if (uploadStarted(job)) {
+      last = -Infinity;
+      continue;
+    }
+    current.push(job);
     last = time;
   }
+  // The newest run stays open while later voices may still join it.
+  if (current.length && DateTime.toEpochMillis(now) - last >= episodeGapMs) groups.push(current);
   const { db } = yield* Store;
   const iso = DateTime.formatIso(now);
-  for (const [index, group] of groups.entries()) {
-    const end = Date.parse(group.at(-1)!.published_at);
-    // The newest run stays open while later voices may still join it.
-    if (index === groups.length - 1 && DateTime.toEpochMillis(now) - end < episodeGapMs) break;
+  for (const group of groups) {
     const head = group[0]!;
     yield* attempt("Form an episode", async () => {
       await using tx = await db.begin();
@@ -150,12 +162,11 @@ export const episodeMetadata = Effect.fn("episodeMetadata")(function* (head: Job
   let members = yield* episodeMembers(head);
   if (members.some((job) => job.episode_offset === null))
     return yield* new AppError({ message: `Render episode ${head.id} before titling it` });
-  if (
-    saved.generation_version !== BigInt(episodeGenerationVersion) ||
-    !saved.topic ||
-    !saved.thumbnail_quote ||
-    members.some((job) => job.chapter === null)
-  ) {
+  const complete =
+    !!saved.topic && !!saved.thumbnail_quote && members.every((job) => job.chapter !== null);
+  // Once the upload has begun, its title and chapters are on YouTube: keep them.
+  const frozen = complete && uploadStarted(members[0]!);
+  if (!frozen && (!complete || saved.generation_version !== BigInt(episodeGenerationVersion))) {
     const telegram = yield* Telegram;
     const transcriber = yield* Transcriber;
     const titler = yield* EpisodeTitler;
@@ -191,8 +202,8 @@ export const episodeMetadata = Effect.fn("episodeMetadata")(function* (head: Job
     return { topic, thumbnailQuote, tags, members, duration: saved.duration ?? Infinity };
   }
   return {
-    topic: saved.topic,
-    thumbnailQuote: saved.thumbnail_quote,
+    topic: saved.topic!,
+    thumbnailQuote: saved.thumbnail_quote!,
     tags: saved.tags ?? [],
     members,
     duration: saved.duration ?? Infinity,
@@ -213,13 +224,16 @@ export const episodeDescription = (
   recordings: members,
 });
 
-/** Make the next generation of every unpublished episode's metadata. */
+/**
+ * Make the next generation of the metadata of every episode not yet uploaded; an upload
+ * already carries its title and chapters.
+ */
 export const regenerateEpisodes = Effect.fn("regenerateEpisodes")(function* () {
   const { db } = yield* Store;
   yield* attempt("Queue episode metadata regeneration", () =>
     db.execute(
-      `UPDATE episodes SET generation_version=0
-        WHERE id IN (SELECT id FROM jobs WHERE status!='uploaded')`,
+      `UPDATE episodes SET generation_version=0 WHERE id IN (SELECT id FROM jobs
+        WHERE status!='uploaded' AND upload_session IS NULL AND youtube_id IS NULL)`,
     ),
   );
 });

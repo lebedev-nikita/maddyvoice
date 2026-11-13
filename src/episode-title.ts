@@ -54,7 +54,8 @@ export function validateEpisodeDraft(value: unknown, voices: readonly EpisodeVoi
   if (draft.chapters.length !== voices.length)
     throw new Error("Every voice needs exactly one chapter title");
   const chapters = draft.chapters.map((chapter, index) => {
-    const title = chapter.replace(/\s+/g, " ").trim();
+    // YouTube rejects descriptions with angle brackets.
+    const title = chapter.replace(/[<>]/g, " ").replace(/\s+/g, " ").trim();
     if (title.length < 3 || title.length > 60)
       throw new Error("Chapter title must have 3–60 characters");
     return { start: voices[index]!.start, title };

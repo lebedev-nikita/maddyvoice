@@ -1,7 +1,13 @@
 import { DateTime, Effect } from "effect";
 import { AppError, attempt, safeMessage, Settings } from "./core.ts";
 import { listJobs, runSql, Store, type Job } from "./database.ts";
-import { episodeCutover, episodeHead, episodeMember, inEpisodes } from "./episode-queue.ts";
+import {
+  episodeCutover,
+  episodeHead,
+  episodeMember,
+  inEpisodes,
+  uploadStarted,
+} from "./episode-queue.ts";
 import { UploadReview, YouTube } from "./youtube.ts";
 import { preparePublicationMetadata } from "./titles.ts";
 
@@ -16,7 +22,8 @@ const pause = (job: Job, message: string) =>
  * recording. The rest of an episode's recordings are published with it.
  */
 export const nextPublication = Effect.fn("nextPublication")(function* () {
-  const jobs = (yield* listJobs()).filter((job) => !episodeMember(job));
+  const all = yield* listJobs();
+  const jobs = all.filter((job) => !episodeMember(job));
   const legacy = jobs.find(
     (job) =>
       job.status !== "uploaded" &&
@@ -31,10 +38,17 @@ export const nextPublication = Effect.fn("nextPublication")(function* () {
   }
   const head = jobs.find((job) => job.status !== "uploaded");
   if (!head) return undefined;
-  // A recording waits until six hours of silence close its episode.
-  if (head.episode_id === null && inEpisodes(head, yield* episodeCutover())) return undefined;
-  const frontier = jobs.findLast(
-    (job) => job.status === "uploaded" || (job.youtube_id && job.publication_privacy !== "private"),
+  // A recording waits until six hours of silence close its episode, unless its upload began.
+  if (head.episode_id === null && !uploadStarted(head) && inEpisodes(head, yield* episodeCutover()))
+    return undefined;
+  const visible = (job: Job) =>
+    job.status === "uploaded" || (!!job.youtube_id && job.publication_privacy !== "private");
+  const byId = new Map(all.map((job) => [job.id, job]));
+  // An episode's recordings are as visible as its upload; the head's own do not count.
+  const frontier = all.findLast(
+    (job) =>
+      (head.episode_id === null || job.episode_id !== head.episode_id) &&
+      (visible(job) || (episodeMember(job) && visible(byId.get(job.episode_id!)!))),
   );
   if (
     !head.catchup_batch &&

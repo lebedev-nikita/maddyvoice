@@ -13,8 +13,9 @@ import { Thumbnails, type ThumbnailRecording } from "../src/thumbnail.ts";
 import { Topics } from "../src/topic.ts";
 import { Transcriber, TranscriptStore } from "../src/transcription.ts";
 import { drainQueue } from "../src/worker.ts";
-import { listTitles } from "../src/titles.ts";
-import { YouTube, YouTubeClient, type EpisodeDescription } from "../src/youtube.ts";
+import { listTitles, regenerateTitles } from "../src/titles.ts";
+import { episodeMetadata } from "../src/episode-queue.ts";
+import { videoMetadata, YouTube, YouTubeClient, type EpisodeDescription } from "../src/youtube.ts";
 import { episodeFakes, type EpisodeCalls } from "./episode-fakes.ts";
 
 const temporary: string[] = [];
@@ -37,6 +38,7 @@ const post = (id: number, hoursAgo: number, voice = true, text = ""): Post => ({
 class Client extends YouTubeClient {
   readonly starts: { id: string; episode?: EpisodeDescription }[] = [];
   readonly published: string[] = [];
+  failResume = false;
   constructor() {
     super({
       clientId: "test",
@@ -58,6 +60,7 @@ class Client extends YouTubeClient {
     return `https://www.googleapis.com/upload/youtube/v3/videos?upload_id=${job.id}`;
   }
   override async resume(session: string) {
+    if (this.failResume) throw new Error("Network failure");
     return `v-${new URL(session).searchParams.get("upload_id")}`;
   }
   override async updateTitle(): Promise<"applied" | "manual"> {
@@ -158,7 +161,7 @@ async function fixture(feed: Post[]) {
   ).pipe(Layer.provideMerge(settings));
   const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof layer>>) =>
     Effect.runPromise(effect.pipe(Effect.provide(layer)));
-  return { client, calls, renders, singles, thumbnails, run };
+  return { client, calls, renders, singles, thumbnails, run, dataDir };
 }
 
 it("publishes recordings after the cutover as one episode once six hours of silence follow", async () => {
@@ -307,4 +310,104 @@ it("does not publish a recording that is waiting for its episode to close", asyn
   );
   expect(f.renders).toEqual([]);
   expect(f.client.starts).toEqual([]);
+});
+
+it("keeps an episode's description within YouTube's limit and free of angle brackets", () => {
+  const recordings = Array.from({ length: 40 }, (_, index) => ({
+    source_url: `https://t.me/maddysontg/${1000 + index}`,
+    published_at: "2026-11-08T10:35:13.000Z",
+    caption: "Подпись <b>".repeat(20),
+  }));
+  const job = { id: "maddysontg-1000-0", channel: "maddysontg" } as Job;
+  const long = videoMetadata(job, "private", {
+    title: "Мэддисон о голосовании",
+    chapters: recordings.map(
+      (_, index) => `${index}:00 Очень длинное название главы <номер> ${index}`,
+    ),
+    recordings,
+  }).snippet.description;
+  expect(Buffer.byteLength(long, "utf8")).toBeLessThanOrEqual(5000);
+  expect(long).not.toMatch(/[<>]/);
+  expect(long.endsWith("maddyvoice:maddysontg-1000-0")).toBe(true);
+  const short = videoMetadata(job, "private", {
+    title: "Мэддисон о голосовании",
+    chapters: ["0:00 Начало", "0:30 Середина", "1:00 Конец"],
+    recordings: recordings.slice(0, 3),
+  }).snippet.description;
+  expect(short.startsWith("0:00 Начало\n0:30 Середина\n1:00 Конец\n\n")).toBe(true);
+});
+
+it("publishes a recording whose upload already began alone instead of absorbing it", async () => {
+  const feed = [post(20, 14), post(21, 13), post(22, 12)];
+  const f = await fixture(feed);
+  await f.run(
+    Effect.gen(function* () {
+      yield* savePosts([], "live", 15);
+      yield* savePosts(feed, "live", 22);
+      // A catch-up started this upload before the switch point was set below it.
+      yield* runSql(
+        "Start an upload",
+        "UPDATE jobs SET upload_session='https://www.googleapis.com/upload/youtube/v3/videos?upload_id=maddysontg-21-0', upload_privacy='private', status='uploading', video_path=?, video_sha256=?, video_size=? WHERE id='maddysontg-21-0'",
+        [
+          ...(yield* attempt("Read fixture video", async () => {
+            const path = join(f.dataDir, "video.mp4");
+            return [path, (await fingerprint(path)).sha256, (await fingerprint(path)).size];
+          })),
+        ],
+      );
+      yield* drainQueue(10);
+      // It goes on as a single video, waiting for its captions like one; the next episode
+      // is formed behind it.
+      expect((yield* listJobs()).map((job) => [job.id, job.status, job.episode_id])).toEqual([
+        ["maddysontg-20-0", "uploaded", "maddysontg-20-0"],
+        ["maddysontg-21-0", "uploading", null],
+        ["maddysontg-22-0", "pending", "maddysontg-22-0"],
+      ]);
+    }),
+  );
+  expect(f.renders.map((render) => render.recordings)).toEqual([[20]]);
+  expect(f.client.published).toEqual(["maddysontg-20-0"]);
+});
+
+it("keeps an uploading episode's title and chapters when metadata is regenerated", async () => {
+  const feed = [post(20, 14), post(21, 13)];
+  const f = await fixture(feed);
+  await f.run(
+    Effect.gen(function* () {
+      yield* savePosts([], "live", 15);
+      yield* savePosts(feed, "live", 21);
+      f.client.failResume = true;
+      yield* drainQueue(10);
+      expect(f.calls.titles).toBe(1);
+      yield* regenerateTitles();
+      yield* runSql("Bump generation", "UPDATE episodes SET generation_version=0");
+      const head = (yield* listJobs())[0]!;
+      expect(head.upload_session).not.toBeNull();
+      expect((yield* episodeMetadata(head)).topic).toBe("о голосовании за участников");
+    }),
+  );
+  expect(f.calls.titles).toBe(1);
+});
+
+it("rejects an imported recording inside an episode that may already be visible", async () => {
+  const feed = [post(20, 14), post(22, 13)];
+  const f = await fixture(feed);
+  const result = await f.run(
+    Effect.gen(function* () {
+      yield* savePosts([], "live", 15);
+      yield* savePosts(feed, "live", 22);
+      yield* drainQueue(10);
+      // The response to the head's publication was lost: it may be public, its members not.
+      yield* runSql(
+        "Lose the publication response",
+        "UPDATE jobs SET status='uploading' WHERE id='maddysontg-20-0'",
+      );
+      yield* runSql(
+        "Members still unpublished",
+        "UPDATE jobs SET status='pending' WHERE id='maddysontg-22-0'",
+      );
+      return yield* savePosts([post(21, 13.5)], "history").pipe(Effect.result);
+    }),
+  );
+  expect(result._tag).toBe("Failure");
 });

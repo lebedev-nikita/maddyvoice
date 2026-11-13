@@ -163,9 +163,12 @@ export const savePosts = Effect.fn("Store.savePosts")(function* (
   return yield* attempt("Save discovered recordings", async () => {
     await using tx = await db.begin();
     // A known non-private release may have succeeded even if its response was lost.
+    // So may every recording of an episode whose upload might be visible.
     const row = await tx.query`SELECT message_id, audio_index FROM jobs WHERE channel=${channel}
       AND (status='uploaded' OR (youtube_id IS NOT NULL
-        AND (publication_privacy IS NULL OR publication_privacy != 'private')))
+        AND (publication_privacy IS NULL OR publication_privacy != 'private'))
+        OR episode_id IN (SELECT id FROM jobs WHERE youtube_id IS NOT NULL
+          AND (publication_privacy IS NULL OR publication_privacy != 'private')))
       ORDER BY message_id DESC, audio_index DESC LIMIT 1`.get();
     const frontier = row === undefined ? undefined : Schema.decodeUnknownSync(Position)(row);
     let inserted = 0;
