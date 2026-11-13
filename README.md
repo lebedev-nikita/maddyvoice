@@ -65,9 +65,9 @@ The command prints the episode's title and YouTube chapters, the start of every
 voice in seconds and its transcript; `complete` is `false` while later voices may
 still join the episode. The title names the main topic of the episode, follows
 the same style rules as single-voice titles and passes the same independent
-review against the speech; chapters group neighbouring voices on one subject and
-are printed only when YouTube would show them (three or more, each at least ten
-seconds long). Title and chapters come from the model proxy (`TOPIC_MODEL`,
+review against the speech. Every voice is a chapter of its own; a voice shorter
+than ten seconds opens the next chapter instead, since YouTube shows chapters only
+from three of them, each at least ten seconds long. Title and chapters come from the model proxy (`TOPIC_MODEL`,
 `TOPIC_REVIEW_MODEL`).
 
 Each voice is transcribed once through the OpenAI API

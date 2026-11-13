@@ -30,38 +30,27 @@ describe("episode title and chapters", () => {
     expect(prompt).toContain("Не перечисляй темы");
   });
 
-  it("starts chapters at the first voice and keeps them in order", () => {
+  it("gives every voice its own chapter", () => {
+    const titles = [
+      "Отмена для Давга",
+      "Пауза в решении",
+      "Испытание Baby Steps",
+      "Итоги прохождения",
+    ];
     const draft = validateEpisodeDraft(
-      {
-        topic: "о голосовании за участников ивента",
-        chapters: [
-          { voice: 0, title: "Отмена для Давга" },
-          { voice: 2, title: "Испытание Baby Steps" },
-        ],
-      },
+      { topic: "о голосовании за участников ивента", chapters: titles },
       voices,
     );
-    expect(draft.chapters).toEqual([
-      { start: 0, title: "Отмена для Давга" },
-      { start: 328.1, title: "Испытание Baby Steps" },
-    ]);
-    for (const chapters of [
-      [{ voice: 1, title: "Начало" }],
-      [
-        { voice: 0, title: "Начало" },
-        { voice: 0, title: "Повтор" },
-      ],
-      [
-        { voice: 0, title: "Начало" },
-        { voice: 4, title: "Нет такого" },
-      ],
-    ])
+    expect(draft.chapters).toEqual(
+      titles.map((title, index) => ({ start: voices[index]!.start, title })),
+    );
+    for (const chapters of [titles.slice(1), [...titles, "Лишняя"], [...titles.slice(0, 3), "Я"]])
       expect(() =>
         validateEpisodeDraft({ topic: "о голосовании за участников", chapters }, voices),
       ).toThrow();
   });
 
-  it("writes YouTube chapter lines only when YouTube would show them", () => {
+  it("writes YouTube chapter lines and lets a voice under ten seconds open the next", () => {
     const chapters = [
       { start: 0, title: "Отмена для Давга" },
       { start: 10.7, title: "Пауза в решении" },
@@ -74,16 +63,26 @@ describe("episode title and chapters", () => {
     ]);
     expect(chapterLines(chapters.slice(0, 2), 400)).toEqual([]);
     expect(
-      chapterLines([{ start: 0, title: "А" }, { start: 5, title: "Б" }, chapters[2]!], 400),
+      chapterLines(
+        [{ start: 0, title: "Короткое" }, { start: 5, title: "Начало" }, ...chapters.slice(1)],
+        335,
+      ),
+      // The short last voice joins the one before, leaving two chapters: too few for YouTube.
     ).toEqual([]);
+    expect(
+      chapterLines(
+        [{ start: 0, title: "Короткое" }, { start: 5, title: "Начало" }, ...chapters.slice(1)],
+        400,
+      ),
+    ).toEqual(["0:00 Начало", "0:10 Пауза в решении", "5:28 Испытание Baby Steps"]);
     expect(chapterTime(3725.9)).toBe("1:02:05");
   });
 
   it("returns the reviewed title with the chapters of the same draft", async () => {
     const requests: ModelRequest[] = [];
     const drafts = [
-      { topic: "о первом черновике", chapters: [{ voice: 0, title: "Первый" }] },
-      { topic: "о голосовании за участников", chapters: [{ voice: 0, title: "Второй" }] },
+      { topic: "о первом черновике", chapters: ["Первый", "Первый", "Первый", "Первый"] },
+      { topic: "о голосовании за участников", chapters: ["Отмена", "Пауза", "Проверка", "Итоги"] },
     ];
     const proxy = Layer.succeed(
       ModelProxy,
@@ -108,7 +107,10 @@ describe("episode title and chapters", () => {
     );
     expect(result).toEqual({
       title: "Мэддисон о голосовании за участников",
-      chapters: [{ start: 0, title: "Второй" }],
+      chapters: ["Отмена", "Пауза", "Проверка", "Итоги"].map((title, index) => ({
+        start: voices[index]!.start,
+        title,
+      })),
     });
     expect(requests).toHaveLength(4);
   });
