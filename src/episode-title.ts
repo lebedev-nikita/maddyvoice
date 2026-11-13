@@ -94,7 +94,7 @@ export class EpisodeTitler extends Context.Service<
   {
     title(
       voices: readonly EpisodeVoice[],
-    ): Effect.Effect<{ title: string; chapters: readonly Chapter[] }, AppError>;
+    ): Effect.Effect<{ topic: string; title: string; chapters: readonly Chapter[] }, AppError>;
   }
 >()("maddyvoice/EpisodeTitler") {
   static readonly layer = Layer.effect(
@@ -148,7 +148,7 @@ export class EpisodeTitler extends Context.Service<
             ),
           );
         const topic = yield* reviewedTopic(transcript, generate, verify);
-        return { title: topicTitle(topic), chapters };
+        return { topic, title: topicTitle(topic), chapters };
       });
       return EpisodeTitler.of({ title });
     }),

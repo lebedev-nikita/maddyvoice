@@ -26,16 +26,30 @@ import { authorizeYouTube, YouTube } from "./youtube.ts";
 import { Topics } from "./topic.ts";
 import { drainTitles, listTitles, regenerateTitles } from "./titles.ts";
 import { Thumbnails } from "./thumbnail.ts";
-import { Transcriber } from "./transcription.ts";
+import { ThumbnailQuotes } from "./thumbnail-quote.ts";
+import { Transcriber, TranscriptStore } from "./transcription.ts";
+import { VideoTagGenerator } from "./video-tags.ts";
 
+// Episodes are transcribed, titled and described by the worker itself: transcripts stay in
+// its BoxDB, and model calls go to the proxy (OPENAI_BASE_URL, OPENAI_API_KEY).
+const episodeMetadataServices = Layer.mergeAll(
+  Transcriber.layer.pipe(Layer.provide(NameChecker.layer), Layer.provide(TranscriptStore.database)),
+  EpisodeTitler.layer,
+  ThumbnailQuotes.layer,
+  VideoTagGenerator.layer,
+).pipe(Layer.provide(ModelProxy.layer));
 const services = Layer.mergeAll(
-  Store.layer,
   Telegram.layer,
   Media.layer,
   YouTube.layer,
   Topics.layer,
   Thumbnails.layer,
-).pipe(Layer.provideMerge(Settings.layer), Layer.provideMerge(BunServices.layer));
+  episodeMetadataServices,
+).pipe(
+  Layer.provideMerge(Store.layer),
+  Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(BunServices.layer),
+);
 const app = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(services));
 const positive = Schema.Int.check(Schema.isGreaterThan(0));
 const limit = Flag.Int("limit").pipe(Flag.withSchema(positive), Flag.withDefault(10));
@@ -170,7 +184,7 @@ const preview = Command.make(
 const episodeServices = Layer.mergeAll(
   Telegram.layer,
   Media.layer,
-  Transcriber.layer.pipe(Layer.provide(NameChecker.layer)),
+  Transcriber.layer.pipe(Layer.provide(NameChecker.layer), Layer.provide(TranscriptStore.files)),
   EpisodeTitler.layer,
 ).pipe(
   Layer.provide(ModelProxy.layer),
@@ -241,6 +255,7 @@ const status = Command.make("status", {}, () =>
               youtube_id,
               publication_privacy,
               catchup_batch,
+              episode_id,
             }) => ({
               id,
               status,
@@ -253,6 +268,7 @@ const status = Command.make("status", {}, () =>
               youtube_id,
               publication_privacy,
               catchup_batch,
+              episode_id,
             }),
           ),
         }),

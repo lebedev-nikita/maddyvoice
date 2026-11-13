@@ -7,6 +7,12 @@ import { commentsReadyAt, titleGenerationVersion, Topics, topicTitle } from "./t
 import { YouTube } from "./youtube.ts";
 import { VideoTags } from "./video-tags.ts";
 import { thumbnailText, Thumbnails } from "./thumbnail.ts";
+import {
+  episodeHead,
+  episodeMetadata,
+  episodeNumber,
+  regenerateEpisodes,
+} from "./episode-queue.ts";
 
 const TitleJob = Schema.Struct({
   job_id: Schema.String,
@@ -46,7 +52,7 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
     `INSERT INTO video_titles
     (job_id, video_id, created_at, updated_at, next_attempt)
     SELECT id, youtube_id, ?, ?, ? FROM jobs WHERE status='uploaded' AND youtube_id IS NOT NULL
-      AND channel=? ON CONFLICT DO NOTHING`,
+      AND channel=? AND (episode_id IS NULL OR episode_id=id) ON CONFLICT DO NOTHING`,
     [iso, iso, DateTime.toEpochMillis(now) + 15 * 60_000, channel],
   );
   const uploaded = new Set(
@@ -72,6 +78,7 @@ const queueTitles = Effect.fn("queueTitles")(function* (now: DateTime.Utc) {
 
 export const regenerateTitles = Effect.fn("regenerateTitles")(function* () {
   yield* queueTitles(yield* DateTime.now);
+  yield* regenerateEpisodes();
   yield* runSql(
     "Queue title regeneration without discarding remote reconciliation state",
     `UPDATE video_titles SET status='pending',generation_version=0,next_attempt=0,error=NULL
@@ -144,6 +151,8 @@ const waitForComments = Effect.fn("waitForComments")(function* (
   now: DateTime.Utc,
 ) {
   if (item.topic && item.generation_version === BigInt(titleGenerationVersion)) return false;
+  // Episode titles come from transcripts and the names dictionary, not comments.
+  if (episodeHead(job)) return false;
   const readyAt = commentsReadyAt(job.published_at);
   if (DateTime.toEpochMillis(now) >= readyAt) return false;
   yield* runSql(
@@ -170,14 +179,18 @@ const currentTopic = Effect.fn("currentTopic")(function* (
       thumbnailQuote: item.thumbnail_quote,
       tags: item.tags ?? undefined,
     };
-  const text = yield* readTranscript(item, job, now);
-  if (!text) return;
-  const topics = yield* Topics;
-  const { topic, thumbnailQuote, tags } = yield* topics.summarize(text, {
-    channel: job.channel,
-    messageId: job.message_id.toString(),
-    publishedAt: job.published_at,
-  });
+  let generated: { topic: string; thumbnailQuote: string; tags: readonly string[] };
+  if (episodeHead(job)) generated = yield* episodeMetadata(job);
+  else {
+    const text = yield* readTranscript(item, job, now);
+    if (!text) return;
+    generated = yield* (yield* Topics).summarize(text, {
+      channel: job.channel,
+      messageId: job.message_id.toString(),
+      publishedAt: job.published_at,
+    });
+  }
+  const { topic, thumbnailQuote, tags } = generated;
   // Retain the previous remote title until the write is confirmed.
   yield* runSql(
     "Save video metadata and discard transcript",
@@ -207,7 +220,11 @@ const applyThumbnail = Effect.fn("applyThumbnail")(function* (
   const { dataDir } = yield* Settings;
   const path = yield* thumbnails.render(
     text,
-    { messageId: Number(job.message_id), publishedAt: job.published_at },
+    {
+      messageId: Number(job.message_id),
+      publishedAt: job.published_at,
+      scene: episodeHead(job) ? yield* episodeNumber(job) : undefined,
+    },
     join(dataDir, "thumbnails", `${job.id}.png`),
   );
   const png = yield* attempt("Read rendered thumbnail", () => readFile(path));
@@ -328,7 +345,14 @@ export const preparePublicationMetadata = Effect.fn("preparePublicationMetadata"
     "Queue metadata for private upload",
     `INSERT INTO video_titles (job_id, video_id, created_at, updated_at, next_attempt)
       VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-    [job.id, job.youtube_id, iso, iso, DateTime.toEpochMillis(now) + 15 * 60_000],
+    // An episode's metadata is ready before upload; a single voice waits for its captions.
+    [
+      job.id,
+      job.youtube_id,
+      iso,
+      iso,
+      DateTime.toEpochMillis(now) + (episodeHead(job) ? 0 : 15 * 60_000),
+    ],
   );
   let item = (yield* listTitles()).find((item) => item.job_id === job.id)!;
   if (item.video_id !== job.youtube_id) {
@@ -340,7 +364,7 @@ export const preparePublicationMetadata = Effect.fn("preparePublicationMetadata"
     return false;
   }
   if (publicationMetadataReady(item)) return true;
-  if (!(yield* Topics).enabled)
+  if (!episodeHead(job) && !(yield* Topics).enabled)
     return yield* new AppError({
       message: "Publication requires TOPICS_URL for title and thumbnail generation",
     });
@@ -368,10 +392,13 @@ export const preparePublicationMetadata = Effect.fn("preparePublicationMetadata"
 });
 
 export const drainTitles = Effect.fn("drainTitles")(function* (limit: number, nowFlag = false) {
-  if (!(yield* Topics).enabled) return;
+  const { enabled } = yield* Topics;
   const now = yield* DateTime.now;
   yield* queueTitles(now);
-  const jobs = (yield* listJobs()).filter((job) => job.status === "uploaded");
+  // Without the topic service only episodes, titled from their own transcripts, are retitled.
+  const jobs = (yield* listJobs()).filter(
+    (job) => job.status === "uploaded" && (enabled || episodeHead(job)),
+  );
   const pending = (yield* listTitles())
     .filter(
       (item) =>

@@ -36,6 +36,9 @@ const job: Job = {
   youtube_id: null,
   created_at: "",
   updated_at: "",
+  episode_id: null,
+  episode_offset: null,
+  chapter: null,
 };
 const session = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test";
 

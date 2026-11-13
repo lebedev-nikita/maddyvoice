@@ -20,6 +20,7 @@ import { UploadReview, YouTube, YouTubeClient } from "../src/youtube.ts";
 import { Topics } from "../src/topic.ts";
 import { Thumbnails } from "../src/thumbnail.ts";
 import { drainTitles, listTitles } from "../src/titles.ts";
+import { episodeFakes } from "./episode-fakes.ts";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -160,7 +161,7 @@ async function fixture(client = new Client(), metadataReady = true) {
     client,
     video,
     metadata,
-    layer: Layer.mergeAll(store, youtube, media, telegram, topics, thumbnails),
+    layer: Layer.mergeAll(store, youtube, media, telegram, topics, thumbnails, episodeFakes()),
     prepare: (posts: Post[]) =>
       Effect.gen(function* () {
         yield* savePosts(posts, "history");

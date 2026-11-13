@@ -5,9 +5,10 @@ to a dedicated YouTube channel. Runs locally with Bun, Effect, BoxDB and FFmpeg.
 
 The first scan records the current end of the feed. Subsequent scans queue only
 new recordings. Historical imports are explicit and do not move that boundary.
-Forwarded messages, music uploads and videos are excluded. Each voice message
-becomes a 1080p30 H.264/AAC MP4 using its attached photos as a slideshow, or one
-of twelve bundled backgrounds chosen by message ID. Photos fill the frame with
+Forwarded messages, music uploads and videos are excluded. Voice messages
+are merged into [episodes](#episodes); each becomes a 1080p30 H.264/AAC MP4 in
+which a voice shows its attached photos as a slideshow, or one of twelve bundled
+backgrounds chosen by the episode's number. Photos fill the frame with
 proportional cropping. `@MaddyvoiceArchive` appears at bottom left. On the right,
 a Telegram-style card shows the channel, voice waveform, caption, reactions, views
 and Moscow posting time; the waveform fills blue and a timer counts up during
@@ -42,42 +43,55 @@ copies that checkout's `.env` and installs dependencies. [t3.json](t3.json)
 declares it as the setup action; import it once per machine in the project's
 settings under **Actions**, because T3 Code runs only imported actions.
 
-## Episode preview
+## Episodes
 
-Short voices are being merged into episodes: one video per run of voices with
-less than six hours of silence between them, in Telegram order. The publisher
-still uploads one video per voice; `preview-episode` renders an episode locally
-so the format can be judged first.
+Voices are published as episodes: one video per run of voices with less than
+six hours between them, in Telegram order. Recordings queued before the switch
+(`sources.episodes_after`, the live cursor when the migration ran) are still
+published one by one; a new installation publishes episodes from its first scan.
+
+An episode is formed once six hours pass without another voice, so it appears
+no sooner than six hours after its last voice; until then that voice and every
+later recording wait. The worker renders the episode as one video: every voice
+keeps its own card, caption and photos, and the card marks its place (`3 / 14`).
+Voices without photos share one scene, chosen by the episode's number, so
+consecutive episodes differ; the thumbnail uses the same scene.
+
+Before uploading, the worker transcribes every voice, writes the title, YouTube
+chapters, thumbnail quote and tags, and keeps all of it in BoxDB. The title names
+the main topic of the episode, follows the same style rules as single-voice titles
+and passes the same independent review against the speech; comments and YouTube
+captions are not used. Every voice is a chapter of its own; a voice shorter than
+ten seconds opens the next chapter instead, since YouTube shows chapters only
+from three of them, each at least ten seconds long. The description lists the
+chapters, then every original message with its time and caption. The upload
+then follows the same private staging, thumbnail and publication barrier as a
+single voice, and all the episode's recordings are marked published together.
+
+Each voice is transcribed once through the OpenAI API
+(`OPENAI_TRANSCRIPTION_API_KEY`, a key restricted to `/v1/audio`;
+`TRANSCRIPTION_MODEL` defaults to `gpt-transcribe`). The worker keeps transcripts
+in the `transcripts` table; they are paid for and are not discarded. The
+recogniser is hinted with 100 names: first those that Maddyson's text posts
+around the episode mention, then the most important of the rest. The API would
+take about 900, but a longer list weakened the hints in a test. Titles, chapters,
+quotes, tags and name verdicts come from the model proxy (`OPENAI_BASE_URL`,
+`OPENAI_API_KEY`, `TOPIC_MODEL`, `TOPIC_REVIEW_MODEL`), which the worker calls
+directly.
+
+To judge an episode without publishing it:
 
 ```sh
 bun run cli preview-episode 7779
 ```
 
-The command finds the episode containing that voice, reading the feed in both
+The preview finds the episode containing that voice, reading the feed in both
 directions until six hours without voices lie on each side, and writes
-`data/videos/preview-episode-<first voice id>.mp4`. Every voice keeps its own
-card, caption and photos; the card marks its place in the episode (`3 / 14`).
-Voices without photos share one scene, chosen by the video's number so that
-consecutive videos differ; the preview uses the first voice's id as that
-number. Text posts between the voices are not shown.
-
-The command prints the episode's title and YouTube chapters, the start of every
-voice in seconds and its transcript; `complete` is `false` while later voices may
-still join the episode. The title names the main topic of the episode, follows
-the same style rules as single-voice titles and passes the same independent
-review against the speech. Every voice is a chapter of its own; a voice shorter
-than ten seconds opens the next chapter instead, since YouTube shows chapters only
-from three of them, each at least ten seconds long. Title and chapters come from the model proxy (`TOPIC_MODEL`,
-`TOPIC_REVIEW_MODEL`).
-
-Each voice is transcribed once through the OpenAI API
-(`OPENAI_TRANSCRIPTION_API_KEY`, a key restricted to `/v1/audio`;
-`TRANSCRIPTION_MODEL` defaults to `gpt-transcribe`) and saved under
-`data/transcripts/<model>/`, for titles that will no longer wait for YouTube
-captions. The recogniser is hinted with 100 names: first those that Maddyson's
-text posts around the episode mention, then the most important of the rest. The
-API would take about 900, but a longer list weakened the hints in a test.
-The preview reads no queue and uploads nothing.
+`data/videos/preview-episode-<first voice id>.mp4`. It prints the title,
+chapters, the start of every voice in seconds and its transcript; `complete` is
+`false` while later voices may still join the episode. It uses the first voice's
+id as the episode's number, keeps transcripts under `data/transcripts/<model>/`,
+reads no queue and uploads nothing.
 
 [assets/names.json](assets/names.json) lists the names of people, channels,
 games and services that Maddyson writes about, most important first. It was
@@ -87,8 +101,8 @@ recogniser still gets wrong: a misheard spelling is replaced by the name with th
 same Russian ending (`Виджелинку` → `VJLink`, `Сосавоту` → `Сасавоту`). An alias
 that is also a common word (`давка`, `насрал`) carries a `meaning`; each time it
 is heard, a model decides from the surrounding text whether it stands for the
-name, and the verdict is kept in `data/transcripts/*.names.json`. Saved
-transcripts keep what was heard; names are corrected each time a transcript is
+name, and the verdict is kept with the transcript. Saved transcripts keep what
+was heard; names are corrected each time a transcript is
 read, so a new alias also fixes older transcripts.
 
 ## Connect a new YouTube channel
@@ -144,8 +158,9 @@ repeated imports preserve the live cursor and do not duplicate recordings.
 Status reads can run alongside the worker. `upload` refreshes Telegram first and
 does not publish if that scan fails.
 
-Recordings publish in Telegram message-ID and audio-index order. An earlier
-recording in backoff, processing or review blocks every later one. Uploads start
+Recordings publish in Telegram message-ID and audio-index order; an
+[episode](#episodes) publishes under its first recording. An earlier recording
+in backoff, processing or review blocks every later one. Uploads start
 privately; the worker saves the video ID, waits for processing, then confirms the
 generated title, tags and custom thumbnail before opening the requested
 visibility. Metadata failures, caption waits and thumbnail limits keep the video

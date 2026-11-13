@@ -3,6 +3,17 @@ version: 1
 pragmas:
   application_id: 1112496196
 tables:
+  episodes:
+    columns:
+      id: TEXT PRIMARY KEY REFERENCES jobs(id)
+      number: INTEGER UNIQUE
+      duration?: REAL
+      topic?: TEXT
+      thumbnail_quote?: TEXT
+      tags?: TEXT[]
+      generation_version: INTEGER DEFAULT 0
+      created_at: TEXT
+      updated_at: TEXT
   jobs:
     columns:
       id: TEXT PRIMARY KEY
@@ -27,17 +38,37 @@ tables:
       upload_privacy?: ENUM('private', 'public', 'unlisted')
       publication_privacy?: ENUM('private', 'public', 'unlisted')
       catchup_batch?: TEXT
+      episode_id?: TEXT
+      episode_offset?: REAL
+      chapter?: TEXT
     constraints:
       - unique: [channel, message_id, audio_index]
+  name_verdicts:
+    columns:
+      job_id: TEXT REFERENCES jobs(id)
+      model: TEXT
+      trigger: TEXT
+      name: BOOLEAN
+    constraints:
+      - primary_key: [job_id, model, trigger]
   sources:
     columns:
       channel: TEXT PRIMARY KEY
       cursor: INTEGER
       checked_at: TEXT
+      episodes_after?: INTEGER
   title_caption_budget:
     columns:
       day: TEXT PRIMARY KEY
       checks: INTEGER DEFAULT 0
+  transcripts:
+    columns:
+      job_id: TEXT REFERENCES jobs(id)
+      model: TEXT
+      text: TEXT
+      created_at: TEXT
+    constraints:
+      - primary_key: [job_id, model]
   video_titles:
     columns:
       job_id: TEXT PRIMARY KEY REFERENCES jobs(id)
@@ -94,3 +125,6 @@ migrations:
   - version: "20261029000000"
     name: automatic_thumbnails
     checksum: 7b85ea5736cbc887617699367167d469821adb3da787321ce749e6e2c3eef6df
+  - version: "20261114000000"
+    name: episodes
+    checksum: afeb60d52b91ba574b2da0c841ccef8b77314a1a5ab321716b0c80bcb1fd0896

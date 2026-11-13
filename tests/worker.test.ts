@@ -12,6 +12,7 @@ import { YouTube, YouTubeClient } from "../src/youtube.ts";
 import { Topics } from "../src/topic.ts";
 import { Thumbnails } from "../src/thumbnail.ts";
 import { writeFile } from "node:fs/promises";
+import { episodeFakes } from "./episode-fakes.ts";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -246,6 +247,7 @@ it("persists the session BEFORE video bytes and recovers a lost completion witho
       Effect.provide(media),
       Effect.provide(telegram),
       Effect.provide(Topics.layer),
+      Effect.provide(episodeFakes()),
       Effect.provideService(
         Thumbnails,
         Thumbnails.of({ render: () => Effect.die("Reuse confirmed thumbnail") }),

@@ -106,6 +106,7 @@ describe("episode title and chapters", () => {
       ),
     );
     expect(result).toEqual({
+      topic: "о голосовании за участников",
       title: "Мэддисон о голосовании за участников",
       chapters: ["Отмена", "Пауза", "Проверка", "Итоги"].map((title, index) => ({
         start: voices[index]!.start,

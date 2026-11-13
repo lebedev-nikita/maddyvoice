@@ -29,6 +29,11 @@ const Job = Schema.Struct({
   youtube_id: Schema.NullOr(Schema.String),
   created_at: Schema.String,
   updated_at: Schema.String,
+  // Set on every recording of an episode to the id of its first recording, which carries
+  // the episode's upload; the offset and chapter title place the recording in that video.
+  episode_id: Schema.NullOr(Schema.String),
+  episode_offset: Schema.NullOr(Schema.Number),
+  chapter: Schema.NullOr(Schema.String),
 });
 export type Job = typeof Job.Type;
 const jobKey = (channel: string, message: number, index: number) =>
@@ -168,7 +173,9 @@ export const savePosts = Effect.fn("Store.savePosts")(function* (
       inserted += await insertPostRecordings(tx, channel, post, frontier, now, origin, catchup?.id);
     }
     if (cursor !== undefined) {
-      await tx.query`INSERT INTO sources(channel, cursor, checked_at) VALUES (${channel}, ${cursor}, ${now})
+      // A new channel publishes episodes from its first live poll on.
+      await tx.query`INSERT INTO sources(channel, cursor, checked_at, episodes_after)
+        VALUES (${channel}, ${cursor}, ${now}, ${cursor})
         ON CONFLICT(channel) DO UPDATE SET cursor = excluded.cursor, checked_at = excluded.checked_at`.run();
     }
     await tx.commit();
