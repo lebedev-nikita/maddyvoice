@@ -9,6 +9,8 @@ import { commentsReadyAt, Topics, type TopicSource } from "../src/topic.ts";
 import { drainTitles, listTitles, regenerateTitles } from "../src/titles.ts";
 import { YouTube, YouTubeClient } from "../src/youtube.ts";
 import { Thumbnails } from "../src/thumbnail.ts";
+import { episodeFakes } from "./episode-fakes.ts";
+import { Telegram } from "../src/telegram.ts";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -50,6 +52,11 @@ async function fixture(
     }),
   );
   return Layer.mergeAll(
+    episodeFakes(),
+    Layer.succeed(
+      Telegram,
+      Telegram.of({ page: () => Effect.die("unused"), post: () => Effect.die("unused") }),
+    ),
     Store.layer.pipe(Layer.provideMerge(config)),
     Layer.succeed(
       Topics,

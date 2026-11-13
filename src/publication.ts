@@ -1,6 +1,13 @@
 import { DateTime, Effect } from "effect";
 import { AppError, attempt, safeMessage, Settings } from "./core.ts";
-import { listJobs, runSql, type Job } from "./database.ts";
+import { listJobs, runSql, Store, type Job } from "./database.ts";
+import {
+  episodeCutover,
+  episodeHead,
+  episodeMember,
+  inEpisodes,
+  uploadStarted,
+} from "./episode-queue.ts";
 import { UploadReview, YouTube } from "./youtube.ts";
 import { preparePublicationMetadata } from "./titles.ts";
 
@@ -10,8 +17,13 @@ const pause = (job: Job, message: string) =>
     job.id,
   ]);
 
+/**
+ * The earliest unfinished publication: a single recording, or an episode under its first
+ * recording. The rest of an episode's recordings are published with it.
+ */
 export const nextPublication = Effect.fn("nextPublication")(function* () {
-  const jobs = yield* listJobs();
+  const all = yield* listJobs();
+  const jobs = all.filter((job) => !episodeMember(job));
   const legacy = jobs.find(
     (job) =>
       job.status !== "uploaded" &&
@@ -26,8 +38,17 @@ export const nextPublication = Effect.fn("nextPublication")(function* () {
   }
   const head = jobs.find((job) => job.status !== "uploaded");
   if (!head) return undefined;
-  const frontier = jobs.findLast(
-    (job) => job.status === "uploaded" || (job.youtube_id && job.publication_privacy !== "private"),
+  // A recording waits until six hours of silence close its episode, unless its upload began.
+  if (head.episode_id === null && !uploadStarted(head) && inEpisodes(head, yield* episodeCutover()))
+    return undefined;
+  const visible = (job: Job) =>
+    job.status === "uploaded" || (!!job.youtube_id && job.publication_privacy !== "private");
+  const byId = new Map(all.map((job) => [job.id, job]));
+  // An episode's recordings are as visible as its upload; the head's own do not count.
+  const frontier = all.findLast(
+    (job) =>
+      (head.episode_id === null || job.episode_id !== head.episode_id) &&
+      (visible(job) || (episodeMember(job) && visible(byId.get(job.episode_id!)!))),
   );
   if (
     !head.catchup_batch &&
@@ -71,12 +92,19 @@ export const completePublication = Effect.fn("completePublication")(function* (i
   // Complete this barrier before committing the row, including when recovering a lost response.
   // It prevents consecutive public releases from sharing YouTube's second-resolution timestamp.
   if (privacy !== "private") yield* Effect.sleep("2 seconds");
-  yield* runSql(
-    "Confirm ordered publication",
-    `UPDATE jobs SET status='uploaded', upload_session=NULL,
-    error=NULL, next_attempt=0, updated_at=? WHERE id=?`,
-    [DateTime.formatIso(yield* DateTime.now), job.id],
-  );
+  const { db } = yield* Store;
+  const iso = DateTime.formatIso(yield* DateTime.now);
+  yield* attempt("Confirm ordered publication", async () => {
+    await using tx = await db.begin();
+    await tx.query`UPDATE jobs SET status='uploaded', upload_session=NULL,
+      error=NULL, next_attempt=0, updated_at=${iso} WHERE id=${job.id}`.run();
+    // An episode's other recordings are published in the same video.
+    if (episodeHead(job))
+      await tx.query`UPDATE jobs SET status='uploaded', youtube_id=${job.youtube_id},
+        publication_privacy=${privacy}, error=NULL, next_attempt=0, updated_at=${iso}
+        WHERE episode_id=${job.id} AND id!=${job.id}`.run();
+    await tx.commit();
+  });
   yield* Effect.logInfo(`Published ${job.id}: https://youtu.be/${job.youtube_id}`);
   return true;
 });

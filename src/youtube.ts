@@ -117,7 +117,74 @@ function legacyInitialTitle(job: Job) {
   return Array.from(title).slice(0, 100).join("");
 }
 
-export function videoMetadata(job: Job, privacy: "public" | "private" | "unlisted") {
+/** What an episode's video says about itself; `chapters` are YouTube chapter lines. */
+export type EpisodeDescription = {
+  readonly title: string;
+  readonly chapters: readonly string[];
+  readonly recordings: readonly Pick<Job, "source_url" | "published_at" | "caption">[];
+};
+
+const utcTime = (iso: string) => iso.replace("T", " ").replace(".000Z", " UTC");
+
+const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+
+/** As much of a caption as fits the remaining bytes, after a line break. */
+function fittingCaption(text: string, budget: number) {
+  let caption = "";
+  let cost = 0;
+  for (const character of text.replace(/[<>]/g, "").trim()) {
+    const next = bytes(character) + (caption ? 0 : 1);
+    if (cost + next > budget) break;
+    cost += next;
+    caption += character;
+  }
+  return { caption, cost };
+}
+
+/**
+ * Chapters first, so YouTube reads them, then every original message with its time and as
+ * much of its caption as fits YouTube's 5000-byte description. A very long episode drops
+ * its chapters, then the messages that do not fit, rather than fail to upload.
+ */
+function episodeDescription(job: Job, episode: EpisodeDescription) {
+  const marker = `\n\n${sourceMarker(job)}`;
+  const channel = `Голосовые сообщения из Телеграм-канала Мэддисона: https://t.me/${job.channel}`;
+  const sources = episode.recordings.map(
+    (recording) => `\n\n${recording.source_url} — ${utcTime(recording.published_at)}`,
+  );
+  const chapters = episode.chapters.map((line) => line.replace(/[<>]/g, " ")).join("\n");
+  const withChapters = `${chapters}\n\n${channel}`;
+  const head =
+    chapters && bytes(withChapters + sources.join("") + marker) <= 5000 ? withChapters : channel;
+  let budget = 5000 - bytes(head + marker);
+  // The messages that fit form a prefix; the bytes counted for the rest are given back.
+  const kept = sources.filter((source) => (budget -= bytes(source)) >= 0);
+  budget += sources.slice(kept.length).reduce((sum, source) => sum + bytes(source), 0);
+  const blocks = kept.map((source, index) => {
+    const { caption, cost } = fittingCaption(episode.recordings[index]!.caption, budget);
+    budget -= cost;
+    return caption ? `${source}\n${caption}` : source;
+  });
+  return head + blocks.join("") + marker;
+}
+
+export function videoMetadata(
+  job: Job,
+  privacy: "public" | "private" | "unlisted",
+  episode?: EpisodeDescription,
+) {
+  if (episode)
+    return {
+      snippet: {
+        title: episode.title,
+        description: episodeDescription(job, episode),
+        categoryId: "22",
+        defaultLanguage: "ru",
+        defaultAudioLanguage: "ru",
+        tags: defaultVideoTags,
+      },
+      status: { privacyStatus: privacy, selfDeclaredMadeForKids: false },
+    };
   const caption = job.caption.replace(/[<>]/g, "").trim();
   const suffix = `\n\nТелеграм-канал Мэддисона: https://t.me/${job.channel}\nОригинальное сообщение: ${job.source_url}\nДата и время публикации оригинального сообщения: ${job.published_at.replace("T", " ").replace(".000Z", " UTC")}\n\n${sourceMarker(job)}`;
   let description = "";
@@ -238,6 +305,7 @@ export class YouTubeClient {
     job: Job,
     privacy: "public" | "private" | "unlisted",
     signal?: AbortSignal,
+    episode?: EpisodeDescription,
   ): Promise<string> {
     if (job.video_size === null) throw new Error("Video has no size");
     const response = await this.request(
@@ -249,7 +317,7 @@ export class YouTubeClient {
           "X-Upload-Content-Length": String(job.video_size),
           "X-Upload-Content-Type": "video/mp4",
         },
-        body: JSON.stringify(videoMetadata(job, privacy)),
+        body: JSON.stringify(videoMetadata(job, privacy, episode)),
       },
       signal,
     );

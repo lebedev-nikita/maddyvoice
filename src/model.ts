@@ -1,4 +1,4 @@
-import { Config, Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Config, Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 import OpenAI from "openai";
 import { AppError, attempt, safeMessage } from "./core.ts";
 
@@ -29,12 +29,19 @@ export class ModelProxy extends Context.Service<
       const baseURL = yield* Config.String("OPENAI_BASE_URL").pipe(
         Config.withDefault("http://127.0.0.1:8317/v1"),
       );
-      const apiKey = yield* Config.Redacted("OPENAI_API_KEY");
-      const client = new OpenAI({ baseURL, apiKey: Redacted.value(apiKey), maxRetries: 2 });
+      // Worker commands that never call a model run without the proxy key.
+      const apiKey = yield* Config.Redacted("OPENAI_API_KEY").pipe(Config.option);
+      const client = Option.map(
+        apiKey,
+        (key) => new OpenAI({ baseURL, apiKey: Redacted.value(key), maxRetries: 2 }),
+      );
       const json = Effect.fn("ModelProxy.json")(function* (request: ModelRequest) {
+        if (Option.isNone(client))
+          return yield* new AppError({ message: "Set OPENAI_API_KEY to call the model proxy" });
+        const proxy = client.value;
         const response = yield* Effect.tryPromise({
           try: (signal) =>
-            client.responses.create(
+            proxy.responses.create(
               {
                 model: request.model ?? model,
                 input: request.prompt,

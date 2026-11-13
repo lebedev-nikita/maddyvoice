@@ -57,7 +57,12 @@ export function thumbnailLines(quote: string) {
 }
 
 /** The recording a thumbnail belongs to: its post picks the video's background. */
-export type ThumbnailRecording = { readonly messageId: number; readonly publishedAt: string };
+/** `scene` picks the background: an episode's number, otherwise the message id. */
+export type ThumbnailRecording = {
+  readonly messageId: number;
+  readonly publishedAt: string;
+  readonly scene?: number;
+};
 
 /** Fields identifying a video and its recording in local thumbnail batch files. */
 export const ThumbnailRowFields = {
@@ -158,7 +163,10 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
     (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
   );
   const images = yield* attempt("Read thumbnail images and fonts", async () => ({
-    background: await dataUri(backgrounds[recording.messageId % backgrounds.length]!, "image/jpeg"),
+    background: await dataUri(
+      backgrounds[(recording.scene ?? recording.messageId) % backgrounds.length]!,
+      "image/jpeg",
+    ),
     logo: await dataUri(Paths.channelLogo, "image/png"),
     oswald: await dataUri(Paths.thumbnailFont, "font/ttf"),
     roboto: await dataUri(Paths.cardFont, "font/ttf"),

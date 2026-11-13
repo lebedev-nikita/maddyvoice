@@ -42,8 +42,17 @@ const moscowTime = new Intl.DateTimeFormat("ru-RU", {
 const star = `<svg viewBox="0 0 24 24" width="17" height="17"><path fill="#f5a623" d="M12 2.6l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></svg>`;
 const eye = `<svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M12 5C6.5 5 2.7 9.1 1.5 12c1.2 2.9 5 7 10.5 7s9.3-4.1 10.5-7C21.3 9.1 17.5 5 12 5zm0 11.5a4.5 4.5 0 110-9 4.5 4.5 0 010 9zm0-2.3a2.2 2.2 0 100-4.4 2.2 2.2 0 000 4.4z"/></svg>`;
 
-/** Telegram-like voice post; images are data URIs so Chromium never waits on the network. */
-export function cardHtml(post: Post, audioIndex: number, images: CardImages, font: string): string {
+/**
+ * Telegram-like voice post; `position` marks its place in an episode. Images are data URIs so
+ * Chromium never waits on the network.
+ */
+export function cardHtml(
+  post: Post,
+  audioIndex: number,
+  images: CardImages,
+  font: string,
+  position = "",
+): string {
   const card = post.card;
   const waveform = card?.waveforms[audioIndex] ?? [];
   const paragraphs = post.text
@@ -73,6 +82,7 @@ html, body { background: transparent; font-family: Roboto, sans-serif; -webkit-f
 .author { display: flex; align-items: center; gap: 8px; color: #3a8bc8; font-weight: 600; font-size: 14.5px;
   line-height: 19px; margin-bottom: 7px; }
 .author span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.author .position { margin-left: auto; flex: none; color: #a0acb6; font-weight: 500; font-size: 12.5px; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; flex: none; background: #3a8bc8; }
 .voice { display: flex; align-items: center; gap: 11px; margin-bottom: 7px; }
 .play { width: 44px; height: 44px; border-radius: 50%; background: #40a7e3; flex: none; position: relative; }
@@ -97,7 +107,7 @@ body.played .bubble > *:not(.voice), body.played .voice > *:not(.wave-wrap), bod
 body.played .bubble { background: none; box-shadow: none; }
 </style></head><body>
 <div class="card"><div class="bubble">
-  <div class="author">${images.avatar ? `<img class="avatar" src="${images.avatar}">` : `<span class="avatar"></span>`}<span>${escapeHtml(card?.author ?? "")}</span></div>
+  <div class="author">${images.avatar ? `<img class="avatar" src="${images.avatar}">` : `<span class="avatar"></span>`}<span>${escapeHtml(card?.author ?? "")}</span>${position ? `<span class="position">${escapeHtml(position)}</span>` : ""}</div>
   <div class="voice"><div class="play"></div>
     <div class="wave-wrap"><div class="wave" data-waveform="${waveform.join(",")}"></div><div class="duration"></div></div></div>
   ${paragraphs.length ? `<div class="text">${paragraphs.map((part) => `<p>${escapeHtml(part)}</p>`).join("")}</div>` : ""}
@@ -203,8 +213,16 @@ const pngSize = (bytes: Buffer) => ({
 export class PostCard extends Context.Service<
   PostCard,
   {
-    /** Write the card's base and played layers into `work` and place them in the frame. */
-    render(post: Post, audioIndex: number, work: string): Effect.Effect<CardLayers, AppError>;
+    /**
+     * Write the card's base and played layers into `work` and place them in the frame;
+     * `position` is the voice's place in an episode.
+     */
+    render(
+      post: Post,
+      audioIndex: number,
+      work: string,
+      position?: string,
+    ): Effect.Effect<CardLayers, AppError>;
   }
 >()("maddyvoice/PostCard") {
   static readonly layer = Layer.effect(
@@ -216,6 +234,7 @@ export class PostCard extends Context.Service<
         post: Post,
         audioIndex: number,
         work: string,
+        position = "",
       ) {
         const images = yield* attempt("Download post card images", async (signal) => ({
           avatar: post.card?.avatar ? await imageData([post.card.avatar], signal) : "",
@@ -255,7 +274,7 @@ export class PostCard extends Context.Service<
             deviceScaleFactor: 1,
             mobile: false,
           });
-          await page.load(cardHtml(post, audioIndex, images, font));
+          await page.load(cardHtml(post, audioIndex, images, font, position));
           await page.evaluate(pageScript);
           const scale = Number(
             await page.evaluate(

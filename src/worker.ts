@@ -10,6 +10,15 @@ import {
   resumePublication,
 } from "./publication.ts";
 import { UploadReview, YouTube } from "./youtube.ts";
+import {
+  episodeDescription,
+  episodeHead,
+  episodeMember,
+  episodeMetadata,
+  formEpisodes,
+  renderEpisodeVideo,
+} from "./episode-queue.ts";
+import { topicTitle } from "./topic.ts";
 import { randomUUID } from "node:crypto";
 
 export const poll = Effect.fn("poll")(function* () {
@@ -127,6 +136,16 @@ const scanHistory = Effect.fn("scanHistory")(function* (
 
 const ensureRendered = Effect.fn("ensureRendered")(function* (job: Job, now: string) {
   if (job.video_path) return job;
+  if (episodeHead(job)) {
+    const rendered = yield* renderEpisodeVideo(job);
+    return {
+      ...job,
+      status: "ready" as const,
+      video_path: rendered.path,
+      video_sha256: rendered.sha256,
+      video_size: BigInt(rendered.size),
+    };
+  }
   const telegram = yield* Telegram;
   const media = yield* Media;
   const post = yield* telegram.post(Number(job.message_id));
@@ -187,8 +206,12 @@ export const processJob = Effect.fn("processJob")(function* (
   const { videoPath, size } = yield* verifyRendered(job);
   let session = job.upload_session;
   if (!session) {
+    // An episode is uploaded with its final title, chapters and sources.
+    const episode = episodeHead(job) ? yield* episodeMetadata(job) : undefined;
+    const description =
+      episode && episodeDescription(topicTitle(episode.topic), episode.members, episode.duration);
     session = yield* attempt("Start resumable YouTube upload", (signal) =>
-      client.start(job, "private", signal),
+      client.start(job, "private", signal, description),
     );
     // This commit must precede every request that sends video bytes.
     yield* runSql(
@@ -227,6 +250,7 @@ export const drainQueue = Effect.fn("drainQueue")(function* (limit: number, test
   const youtube = yield* YouTube;
   const client = yield* youtube.load();
   yield* attempt("Verify destination YouTube channel", (signal) => client.verifyChannel(signal));
+  yield* formEpisodes(yield* DateTime.now);
   for (let completed = 0; completed < limit; completed++) {
     const job = yield* nextPublication();
     if (!job) return;
@@ -276,21 +300,30 @@ export const previewPost = Effect.fn("previewPost")(function* (messageId: number
   );
 });
 
-export const resolveJob = Effect.fn("resolveJob")(function* (key: string, videoId: string) {
-  const jobs = yield* listJobs();
+/** A recording an operator may act on: a single one or an episode's first. */
+const operableJob = Effect.fn("operableJob")(function* (jobs: readonly Job[], key: string) {
   const job = jobs.find((item) => item.id === key);
   if (!job) return yield* new AppError({ message: "Job not found" });
+  if (episodeMember(job))
+    return yield* new AppError({
+      message: `Act on the episode's first recording, ${job.episode_id}`,
+    });
+  return job;
+});
+
+export const resolveJob = Effect.fn("resolveJob")(function* (key: string, videoId: string) {
+  const jobs = yield* listJobs();
+  const job = yield* operableJob(jobs, key);
   if (job.status === "uploaded")
     return yield* new AppError({ message: "Job is already published" });
-  const head = jobs.find((item) => item.status !== "uploaded");
+  const head = jobs.find((item) => item.status !== "uploaded" && !episodeMember(item));
   if (head?.id !== job.id)
     return yield* new AppError({ message: "Reconcile the earliest unfinished recording first" });
   return yield* resumePublication(job, videoId);
 });
 
 export const retryJob = Effect.fn("retryJob")(function* (key: string, allowNew: boolean) {
-  const job = (yield* listJobs()).find((item) => item.id === key);
-  if (!job) return yield* new AppError({ message: "Job not found" });
+  const job = yield* operableJob(yield* listJobs(), key);
   if (job.status === "uploaded") return yield* new AppError({ message: "Job is already uploaded" });
   if (job.status === "review" && !allowNew) {
     return yield* new AppError({

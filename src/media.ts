@@ -7,6 +7,7 @@ import { pipeline } from "node:stream/promises";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { AppError, attempt, Paths, safeMessage, Settings } from "./core.ts";
+import type { Recording } from "./episode.ts";
 import { PostCard } from "./post-card.ts";
 import type { Post } from "./telegram.ts";
 
@@ -42,7 +43,7 @@ async function openMedia(url: string, signal: AbortSignal): Promise<Response> {
   throw new Error("Too many media redirects");
 }
 
-async function download(
+export async function downloadMedia(
   url: string,
   destination: string,
   maxBytes: number,
@@ -93,14 +94,21 @@ export const listBackgrounds = Effect.gen(function* () {
   return backgrounds;
 });
 
+type Rendered = { path: string; sha256: string; size: number; duration: number };
+
 export class Media extends Context.Service<
   Media,
   {
-    render(
-      post: Post,
-      audioIndex: number,
+    render(post: Post, audioIndex: number, key: string): Effect.Effect<Rendered, AppError>;
+    /**
+     * Render the recordings in order into one video in a single scene, chosen by the video's
+     * number so consecutive videos differ; `starts` are the recordings' offsets in seconds.
+     */
+    renderEpisode(
+      recordings: readonly Recording[],
+      video: number,
       key: string,
-    ): Effect.Effect<{ path: string; sha256: string; size: number; duration: number }, AppError>;
+    ): Effect.Effect<Rendered & { starts: readonly number[] }, AppError>;
   }
 >()("maddyvoice/Media") {
   static readonly layer = Layer.effect(
@@ -142,14 +150,27 @@ export class Media extends Context.Service<
         return stdout;
       }, Effect.scoped);
 
-      const render = Effect.fn("Media.render")(function* (
-        post: Post,
-        audioIndex: number,
-        key: string,
-      ) {
-        const audioUrl = post.audio[audioIndex];
-        if (!audioUrl)
-          return yield* new AppError({ message: "Recording has no downloadable audio" });
+      const probeDuration = Effect.fn("Media.probeDuration")(function* (path: string) {
+        const probeText = yield* execute(config.ffprobe, [
+          "-v",
+          "error",
+          "-show_entries",
+          "format=duration",
+          "-of",
+          "json",
+          path,
+        ]);
+        return yield* attempt("Read media duration", async () => {
+          const probe = Schema.decodeUnknownSync(Probe)(JSON.parse(probeText));
+          const duration = Number(probe.format.duration);
+          if (!Number.isFinite(duration) || duration <= 0 || duration > 12 * 3600)
+            throw new Error("Invalid or excessive media duration");
+          return duration;
+        });
+      });
+
+      /** The output directory and a scratch directory inside it that the scope removes. */
+      const workspace = Effect.fn("Media.workspace")(function* (key: string) {
         if (!/^[a-zA-Z0-9_-]+$/.test(key))
           return yield* new AppError({ message: "Invalid output key" });
         const root = join(config.dataDir, "videos");
@@ -158,36 +179,47 @@ export class Media extends Context.Service<
           attempt("Create render workspace", () => mkdtemp(join(root, ".render-"))),
           (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
         );
+        return { root, work };
+      });
+
+      const save = Effect.fn("Media.save")(function* (
+        temporary: string,
+        root: string,
+        key: string,
+      ) {
+        const path = join(root, `${key}.mp4`);
+        yield* attempt("Save rendered video", () => rename(temporary, path));
+        return { path, ...(yield* attempt("Fingerprint video", () => fingerprint(path))) };
+      });
+
+      /**
+       * Render one voice into `work` over `background` unless it has photos of its own;
+       * `position` marks its place in an episode.
+       */
+      const segment = Effect.fn("Media.segment")(function* (
+        { post, audioIndex }: Recording,
+        background: string,
+        position: string,
+        work: string,
+      ) {
+        const audioUrl = post.audio[audioIndex];
+        if (!audioUrl)
+          return yield* new AppError({ message: "Recording has no downloadable audio" });
         const audioPath = join(work, "audio");
         yield* attempt("Download Telegram audio", (signal) =>
-          download(audioUrl, audioPath, 512 * 1024 * 1024, signal),
+          downloadMedia(audioUrl, audioPath, 512 * 1024 * 1024, signal),
         );
-        const probeText = yield* execute(config.ffprobe, [
-          "-v",
-          "error",
-          "-show_entries",
-          "format=duration",
-          "-of",
-          "json",
-          audioPath,
-        ]);
-        const duration = yield* attempt("Read audio duration", async () => {
-          const probe = Schema.decodeUnknownSync(Probe)(JSON.parse(probeText));
-          const duration = Number(probe.format.duration);
-          if (!Number.isFinite(duration) || duration <= 0 || duration > 12 * 3600)
-            throw new Error("Invalid or excessive audio duration");
-          return duration;
-        });
+        const duration = yield* probeDuration(audioPath);
+        const fps = 30;
         // Attached photos fill the frame; otherwise each post rotates through the backgrounds.
-        const pictures =
-          post.images.length > 0 ? post.images : [backgrounds[post.id % backgrounds.length]!];
-        const card = yield* postCard.render(post, audioIndex, work);
+        const pictures = post.images.length > 0 ? post.images : [background];
+        const card = yield* postCard.render(post, audioIndex, work, position);
         for (const [index, picture] of pictures.entries()) {
           let input = picture;
           if (post.images.length > 0) {
             input = join(work, `input-${index}`);
             yield* attempt("Download attached image", (signal) =>
-              download(picture, input, 50 * 1024 * 1024, signal),
+              downloadMedia(picture, input, 50 * 1024 * 1024, signal),
             );
           }
           yield* execute(config.ffmpeg, [
@@ -221,7 +253,6 @@ export class Media extends Context.Service<
         // Repeat each still frame on demand: a concat demuxer slideshow makes fps
         // burst-duplicate full-size frames that FFmpeg then holds in memory. Stills are
         // converted to the output colour space once; per frame only small layers change.
-        const fps = 30;
         const yuv = "scale=out_color_matrix=bt709:out_range=tv,";
         const starts = pictures.map((_, index) =>
           Math.round(((index * duration) / pictures.length) * fps),
@@ -321,12 +352,73 @@ export class Media extends Context.Service<
           "+faststart",
           temporary,
         ]);
-        const path = join(root, `${key}.mp4`);
-        yield* attempt("Save rendered video", () => rename(temporary, path));
-        const info = yield* attempt("Fingerprint video", () => fingerprint(path));
-        return { path, ...info, duration };
+        return { path: temporary, duration };
+      });
+
+      const render = Effect.fn("Media.render")(function* (
+        post: Post,
+        audioIndex: number,
+        key: string,
+      ) {
+        const { root, work } = yield* workspace(key);
+        // Each post rotates through the backgrounds.
+        const background = backgrounds[post.id % backgrounds.length]!;
+        const video = yield* segment({ post, audioIndex }, background, "", work);
+        return { ...(yield* save(video.path, root, key)), duration: video.duration };
       }, Effect.scoped);
-      return Media.of({ render });
+
+      const renderEpisode = Effect.fn("Media.renderEpisode")(function* (
+        recordings: readonly Recording[],
+        video: number,
+        key: string,
+      ) {
+        if (recordings.length === 0)
+          return yield* new AppError({ message: "Episode has no voices" });
+        const { root, work } = yield* workspace(key);
+        const background = backgrounds[video % backgrounds.length]!;
+        const starts: number[] = [];
+        const files: string[] = [];
+        let offset = 0;
+        for (const [index, recording] of recordings.entries()) {
+          const directory = join(work, `part-${index}`);
+          yield* attempt("Create segment workspace", () => mkdir(directory));
+          const position = recordings.length > 1 ? `${index + 1} / ${recordings.length}` : "";
+          const part = yield* segment(recording, background, position, directory);
+          starts.push(offset);
+          files.push(part.path);
+          // The joined video continues each segment where the previous file ends.
+          offset += yield* probeDuration(part.path);
+        }
+        const list = join(work, "segments.txt");
+        yield* attempt("Write segment list", () =>
+          writeFile(
+            list,
+            files.map((file) => `file '${file.replaceAll("'", "'\\''")}'\n`).join(""),
+          ),
+        );
+        const temporary = join(work, "episode.mp4");
+        // Segments share one encoder configuration, so they join without re-encoding.
+        yield* execute(config.ffmpeg, [
+          "-nostdin",
+          "-v",
+          "error",
+          "-y",
+          "-f",
+          "concat",
+          "-safe",
+          "0",
+          "-i",
+          list,
+          "-c",
+          "copy",
+          "-movflags",
+          "+faststart",
+          temporary,
+        ]);
+        const duration = yield* probeDuration(temporary);
+        return { ...(yield* save(temporary, root, key)), duration, starts };
+      }, Effect.scoped);
+      return Media.of({ render, renderEpisode });
     }),
   ).pipe(Layer.provide(PostCard.layer));
 }

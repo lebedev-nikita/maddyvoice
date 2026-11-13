@@ -34,6 +34,12 @@ describe("post card markup", () => {
     expect(html).toContain('class="reaction paid"');
   });
 
+  it("marks the voice's place in an episode", () => {
+    const images = { avatar: "", reactions: ["", ""] };
+    expect(cardHtml(post, 0, images, "", "2 / 5")).toContain('<span class="position">2 / 5</span>');
+    expect(cardHtml(post, 0, images, "")).not.toContain('class="position"');
+  });
+
   it("falls back to the emoji glyph when no image is available", () => {
     const html = cardHtml(post, 0, { avatar: "", reactions: ["", ""] }, "");
     expect(html).toContain('<span class="glyph">❤</span>2.1K');

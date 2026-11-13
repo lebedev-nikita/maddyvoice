@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -178,7 +178,7 @@ try {
   assert(probe.streams.some((stream) => stream.codec_name === "aac"));
   assert(probe.streams.every((stream) => Math.abs(Number(stream.duration) - duration) < 0.1));
   assert(Math.abs(Number(probe.format.duration) - duration) < 0.1);
-  const pixels = async (time: number, crop: string) => {
+  const pixels = async (time: number, crop: string, path = output.path) => {
     const result = await exec(
       ffmpeg,
       [
@@ -188,7 +188,7 @@ try {
         "-ss",
         String(time),
         "-i",
-        output.path,
+        path,
         "-frames:v",
         "1",
         "-vf",
@@ -267,6 +267,55 @@ try {
     !(r! > 150 && g! < 80 && b! < 80) && !(b! > 150 && r! < 80 && g! < 80),
     "A post without photos must use a rotating background",
   );
+  // Three voices in one video share the scene picked by the video's number (5, unlike any
+  // voice's id); a voice with its own photo still shows it.
+  const voice = (id: number, images: string[] = []) => ({
+    id,
+    date: "2026-10-26T01:02:03.000Z",
+    text: "",
+    forwarded: false,
+    url: `https://t.me/maddysontg/${id}`,
+    audio: ["https://cdn4.telesco.pe/audio"],
+    images,
+    card,
+  });
+  const episode = await Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* (yield* Media).renderEpisode(
+        [voice(13), voice(14, ["https://cdn4.cdn-telegram.org/red"]), voice(15)].map((post) => ({
+          post,
+          audioIndex: 0,
+        })),
+        5,
+        "episode",
+      );
+    }).pipe(Effect.provide(media)),
+  );
+  assert.deepEqual(
+    episode.starts.map((start) => Math.round(start * 10) / 10),
+    [0, duration, 2 * duration],
+  );
+  assert(Math.abs(episode.duration - 3 * duration) < 0.2, `Episode lasts ${episode.duration}s`);
+  const scenes = (await readdir(join(import.meta.dir, "../assets/backgrounds")))
+    .filter((name) => name.endsWith(".jpg"))
+    .sort();
+  const expected = await pixels(
+    0,
+    "1:1:400:540",
+    join(import.meta.dir, "../assets/backgrounds", scenes[5]!),
+  );
+  for (const time of [1, 9]) {
+    const actual = await pixels(time, "1:1:400:540", episode.path);
+    assert(
+      [...expected].every((channel, index) => Math.abs(channel - actual[index]!) < 16),
+      `Every voice must share the episode's scene: ${[...actual].join(",")} at ${time}s, expected ${[...expected].join(",")}`,
+    );
+  }
+  const own = await pixels(5, "1:1:400:540", episode.path);
+  assert(
+    own[0]! > 150 && own[2]! < 80,
+    `A voice's own photo must fill the frame: ${[...own].join(",")}`,
+  );
   const thumbnail = await Effect.runPromise(
     Effect.gen(function* () {
       return yield* (yield* Thumbnails).render(
@@ -314,7 +363,7 @@ try {
     "The thumbnail shows the video scene",
   );
   console.log(
-    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, H.264 1080p30 + AAC, full duration, quote thumbnail",
+    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, three-voice episode in one scene, H.264 1080p30 + AAC, full duration, quote thumbnail",
   );
 } finally {
   globalThis.fetch = originalFetch;

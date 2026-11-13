@@ -20,6 +20,7 @@ import { UploadReview, YouTube, YouTubeClient } from "../src/youtube.ts";
 import { Topics } from "../src/topic.ts";
 import { Thumbnails } from "../src/thumbnail.ts";
 import { drainTitles, listTitles } from "../src/titles.ts";
+import { episodeFakes } from "./episode-fakes.ts";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -115,7 +116,10 @@ async function fixture(client = new Client(), metadataReady = true) {
   const youtube = Layer.succeed(YouTube, YouTube.of({ load: () => Effect.succeed(client) }));
   const media = Layer.succeed(
     Media,
-    Media.of({ render: () => Effect.die("Reuse the prepared file") }),
+    Media.of({
+      render: () => Effect.die("Reuse the prepared file"),
+      renderEpisode: () => Effect.die("Reuse the prepared file"),
+    }),
   );
   const telegram = Layer.succeed(
     Telegram,
@@ -157,7 +161,7 @@ async function fixture(client = new Client(), metadataReady = true) {
     client,
     video,
     metadata,
-    layer: Layer.mergeAll(store, youtube, media, telegram, topics, thumbnails),
+    layer: Layer.mergeAll(store, youtube, media, telegram, topics, thumbnails, episodeFakes()),
     prepare: (posts: Post[]) =>
       Effect.gen(function* () {
         yield* savePosts(posts, "history");

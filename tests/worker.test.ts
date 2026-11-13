@@ -12,6 +12,7 @@ import { YouTube, YouTubeClient } from "../src/youtube.ts";
 import { Topics } from "../src/topic.ts";
 import { Thumbnails } from "../src/thumbnail.ts";
 import { writeFile } from "node:fs/promises";
+import { episodeFakes } from "./episode-fakes.ts";
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -196,7 +197,10 @@ it("persists the session BEFORE video bytes and recovers a lost completion witho
   const youtube = Layer.succeed(YouTube, YouTube.of({ load: () => Effect.succeed(client) }));
   const media = Layer.succeed(
     Media,
-    Media.of({ render: () => Effect.fail(new AppError({ message: "Must reuse existing video" })) }),
+    Media.of({
+      render: () => Effect.fail(new AppError({ message: "Must reuse existing video" })),
+      renderEpisode: () => Effect.die("The queue publishes single recordings"),
+    }),
   );
   const telegram = Layer.succeed(
     Telegram,
@@ -243,6 +247,7 @@ it("persists the session BEFORE video bytes and recovers a lost completion witho
       Effect.provide(media),
       Effect.provide(telegram),
       Effect.provide(Topics.layer),
+      Effect.provide(episodeFakes()),
       Effect.provideService(
         Thumbnails,
         Thumbnails.of({ render: () => Effect.die("Reuse confirmed thumbnail") }),

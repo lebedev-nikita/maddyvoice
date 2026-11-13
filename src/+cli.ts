@@ -5,7 +5,11 @@ import { Argument, Command, Flag } from "effect/cli";
 import { mkdir } from "node:fs/promises";
 import { attempt, json, Settings } from "./core.ts";
 import { getCursor, listJobs, Store, withWorkerLock } from "./database.ts";
+import { previewEpisode } from "./episode-preview.ts";
+import { EpisodeTitler } from "./episode-title.ts";
 import { Media } from "./media.ts";
+import { ModelProxy } from "./model.ts";
+import { NameChecker } from "./names.ts";
 import { manageService } from "./service.ts";
 import { Telegram } from "./telegram.ts";
 import {
@@ -22,15 +26,30 @@ import { authorizeYouTube, YouTube } from "./youtube.ts";
 import { Topics } from "./topic.ts";
 import { drainTitles, listTitles, regenerateTitles } from "./titles.ts";
 import { Thumbnails } from "./thumbnail.ts";
+import { ThumbnailQuotes } from "./thumbnail-quote.ts";
+import { Transcriber, TranscriptStore } from "./transcription.ts";
+import { VideoTagGenerator } from "./video-tags.ts";
 
+// Episodes are transcribed, titled and described by the worker itself: transcripts stay in
+// its BoxDB, and model calls go to the proxy (OPENAI_BASE_URL, OPENAI_API_KEY).
+const episodeMetadataServices = Layer.mergeAll(
+  Transcriber.layer.pipe(Layer.provide(NameChecker.layer), Layer.provide(TranscriptStore.database)),
+  EpisodeTitler.layer,
+  ThumbnailQuotes.layer,
+  VideoTagGenerator.layer,
+).pipe(Layer.provide(ModelProxy.layer));
 const services = Layer.mergeAll(
-  Store.layer,
   Telegram.layer,
   Media.layer,
   YouTube.layer,
   Topics.layer,
   Thumbnails.layer,
-).pipe(Layer.provideMerge(Settings.layer), Layer.provideMerge(BunServices.layer));
+  episodeMetadataServices,
+).pipe(
+  Layer.provideMerge(Store.layer),
+  Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(BunServices.layer),
+);
 const app = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(services));
 const positive = Schema.Int.check(Schema.isGreaterThan(0));
 const limit = Flag.Int("limit").pipe(Flag.withSchema(positive), Flag.withDefault(10));
@@ -159,6 +178,29 @@ const preview = Command.make(
   ),
 );
 
+// An episode preview reads no queue and publishes nothing; it needs the transcription key
+// and the model proxy, which decides whether common words are names and writes the title,
+// instead of the database and YouTube.
+const episodeServices = Layer.mergeAll(
+  Telegram.layer,
+  Media.layer,
+  Transcriber.layer.pipe(Layer.provide(NameChecker.layer), Layer.provide(TranscriptStore.files)),
+  EpisodeTitler.layer,
+).pipe(
+  Layer.provide(ModelProxy.layer),
+  Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(BunServices.layer),
+);
+const episodePreview = Command.make(
+  "preview-episode",
+  { message: Argument.Int("message-id").pipe(Argument.withSchema(positive)) },
+  ({ message }) => previewEpisode(message).pipe(Effect.provide(episodeServices)),
+).pipe(
+  Command.withDescription(
+    "Render the episode containing a voice to a local MP4 and print its title, chapters and transcripts",
+  ),
+);
+
 const status = Command.make("status", {}, () =>
   app(
     Effect.gen(function* () {
@@ -213,6 +255,7 @@ const status = Command.make("status", {}, () =>
               youtube_id,
               publication_privacy,
               catchup_batch,
+              episode_id,
             }) => ({
               id,
               status,
@@ -225,6 +268,7 @@ const status = Command.make("status", {}, () =>
               youtube_id,
               publication_privacy,
               catchup_batch,
+              episode_id,
             }),
           ),
         }),
@@ -290,6 +334,7 @@ root.pipe(
     upload,
     titles,
     preview,
+    episodePreview,
     status,
     auth,
     resolve,

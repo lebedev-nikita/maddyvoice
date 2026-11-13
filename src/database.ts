@@ -29,6 +29,11 @@ const Job = Schema.Struct({
   youtube_id: Schema.NullOr(Schema.String),
   created_at: Schema.String,
   updated_at: Schema.String,
+  // Set on every recording of an episode to the id of its first recording, which carries
+  // the episode's upload; the offset and chapter title place the recording in that video.
+  episode_id: Schema.NullOr(Schema.String),
+  episode_offset: Schema.NullOr(Schema.Number),
+  chapter: Schema.NullOr(Schema.String),
 });
 export type Job = typeof Job.Type;
 const jobKey = (channel: string, message: number, index: number) =>
@@ -158,9 +163,12 @@ export const savePosts = Effect.fn("Store.savePosts")(function* (
   return yield* attempt("Save discovered recordings", async () => {
     await using tx = await db.begin();
     // A known non-private release may have succeeded even if its response was lost.
+    // So may every recording of an episode whose upload might be visible.
     const row = await tx.query`SELECT message_id, audio_index FROM jobs WHERE channel=${channel}
       AND (status='uploaded' OR (youtube_id IS NOT NULL
-        AND (publication_privacy IS NULL OR publication_privacy != 'private')))
+        AND (publication_privacy IS NULL OR publication_privacy != 'private'))
+        OR episode_id IN (SELECT id FROM jobs WHERE youtube_id IS NOT NULL
+          AND (publication_privacy IS NULL OR publication_privacy != 'private')))
       ORDER BY message_id DESC, audio_index DESC LIMIT 1`.get();
     const frontier = row === undefined ? undefined : Schema.decodeUnknownSync(Position)(row);
     let inserted = 0;
@@ -168,7 +176,9 @@ export const savePosts = Effect.fn("Store.savePosts")(function* (
       inserted += await insertPostRecordings(tx, channel, post, frontier, now, origin, catchup?.id);
     }
     if (cursor !== undefined) {
-      await tx.query`INSERT INTO sources(channel, cursor, checked_at) VALUES (${channel}, ${cursor}, ${now})
+      // A new channel publishes episodes from its first live poll on.
+      await tx.query`INSERT INTO sources(channel, cursor, checked_at, episodes_after)
+        VALUES (${channel}, ${cursor}, ${now}, ${cursor})
         ON CONFLICT(channel) DO UPDATE SET cursor = excluded.cursor, checked_at = excluded.checked_at`.run();
     }
     await tx.commit();

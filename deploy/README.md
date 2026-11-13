@@ -214,6 +214,25 @@ Resource settings are declared in the service units. Memory limits require
 kernel cgroup support; do not treat the declared values as a verified hard cap
 on this Pi.
 
+## Episodes
+
+The publisher merges voices into [episodes](../README.md#episodes) and
+transcribes, titles and describes them itself. Before starting a release with
+episodes, add to `/etc/maddyvoice.env` the proxy address and client key (the same
+key as in `/etc/maddyvoice-topics.env`) and the OpenAI key restricted to
+`/v1/audio`:
+
+```dotenv
+OPENAI_BASE_URL=http://127.0.0.1:8317/v1
+OPENAI_API_KEY=<proxy client key>
+OPENAI_TRANSCRIPTION_API_KEY=<OpenAI key restricted to /v1/audio>
+```
+
+The migration that introduces episodes takes the live cursor as the switch:
+recordings already queued publish one by one, newer ones as episodes. Keep the
+topic service running until no single recording waits for its title. Transcripts
+are kept in the publisher's BoxDB and backed up with it.
+
 ## Topic service
 
 `maddyvoice-topics.service` runs the loopback topic endpoint on port `11435` as
