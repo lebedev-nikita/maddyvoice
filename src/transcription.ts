@@ -2,8 +2,9 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Config, Context, Effect, Layer, Redacted } from "effect";
 import OpenAI, { toFile } from "openai";
-import { AppError, attempt, safeMessage, Settings } from "./core.ts";
+import { AppError, attempt, Paths, safeMessage, Settings } from "./core.ts";
 import { downloadMedia } from "./media.ts";
+import { autocorrect, readNames } from "./names.ts";
 import type { Post } from "./telegram.ts";
 
 // The transcription endpoint accepts files up to 25 MB.
@@ -24,7 +25,9 @@ function apiError(cause: unknown) {
 }
 
 // Transcribes voices through the OpenAI API with a key restricted to /v1/audio. Each
-// transcript is paid for once and then read from DATA_DIR/transcripts.
+// transcript is paid for once and then read from DATA_DIR/transcripts. The saved text is
+// what the recogniser heard; names are corrected on every read, so a new alias in
+// assets/names.json also fixes transcripts made before it.
 export class Transcriber extends Context.Service<
   Transcriber,
   {
@@ -46,7 +49,7 @@ export class Transcriber extends Context.Service<
         maxRetries: 2,
       });
       const directory = join(config.dataDir, "transcripts");
-      const transcribe = Effect.fn("Transcriber.transcribe")(function* (
+      const recognise = Effect.fn("Transcriber.recognise")(function* (
         post: Post,
         audioIndex: number,
       ) {
@@ -87,6 +90,13 @@ export class Transcriber extends Context.Service<
         });
         return text.trim();
       }, Effect.scoped);
+      const transcribe = Effect.fn("Transcriber.transcribe")(function* (
+        post: Post,
+        audioIndex: number,
+      ) {
+        const heard = yield* recognise(post, audioIndex);
+        return autocorrect(heard, yield* readNames(Paths.names));
+      });
       return Transcriber.of({ transcribe });
     }),
   );

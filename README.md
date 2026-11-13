@@ -69,6 +69,16 @@ episode. Each voice is transcribed once through the OpenAI API
 `data/transcripts/`, for titles that will no longer wait for YouTube captions.
 The preview reads no queue and uploads nothing.
 
+[assets/names.json](assets/names.json) lists the names of people, channels,
+games and services that Maddyson writes about, most important first. It was
+compiled from his own text posts and the comments under them, and is meant to be
+passed to the recogniser as keywords (at most 900). Its aliases fix what the
+recogniser still gets wrong: a misheard spelling is replaced by the name with the
+same Russian ending (`Виджелинку` → `VJLink`, `Сосавоту` → `Сасавоту`), and an alias
+with `context` applies only when one of its hints is within 300 characters.
+Saved transcripts keep what was heard; names are corrected each time a
+transcript is read, so a new alias also fixes older transcripts.
+
 ## Connect a new YouTube channel
 
 1. [Create a dedicated channel](https://www.youtube.com/channel_switcher), for
