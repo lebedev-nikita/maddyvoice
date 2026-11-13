@@ -203,17 +203,12 @@ export class Media extends Context.Service<
             Paths.videoOverlay,
             "-i",
             card.base,
-            "-i",
-            card.played,
             "-filter_complex",
             "[0:v]scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos," +
               "crop=1920:1080:(iw-ow)/2:(ih-oh)/2," +
               `setsar=1,${post.images.length ? "eq=saturation=0.94," : ""}format=rgba[photo];` +
               `[photo][1:v]overlay=0:840:format=auto[branded];` +
-              `[branded][2:v]overlay=${card.x}:${card.y}:format=auto[carded];` +
-              `[3:v]crop=${card.wave.width}:${card.wave.height}:${card.wave.x}:${card.wave.y}[playedWave];` +
-              `[carded][playedWave]overlay=${card.x + card.wave.x}:${card.y + card.wave.y}:format=auto,` +
-              "format=rgb24[frame]",
+              `[branded][2:v]overlay=${card.x}:${card.y}:format=auto,format=rgb24[frame]`,
             "-map",
             "[frame]",
             "-frames:v",
@@ -235,20 +230,23 @@ export class Media extends Context.Service<
           const frames = index + 1 < pictures.length ? starts[index + 1]! - starts[index]! : 0;
           return `[${index}:v]${yuv}format=yuv420p,loop=loop=${frames - 1}:size=1[slide${index}];`;
         });
-        // Playback progress: the stills already show every bar played (blue); the unplayed
-        // bars from the card cover everything right of the position. The pixel column at
-        // the edge fills with the fraction of a pixel already played, so the fill moves
-        // every frame instead of in whole-pixel steps. Card images are decoded once and
-        // repeated; only these small crops are converted per frame.
+        // Playback progress: the waveform row is composed in RGB for every frame and then
+        // replaces a fixed region of the still. Over the card's unplayed bars go the played
+        // (blue) bars left of the position, then the pixel column at the edge, blended by
+        // the fraction of a pixel already played, so the fill moves every frame instead of
+        // in whole-pixel steps. Card images are decoded once and repeated; only this small
+        // row is converted per frame.
         const { wave, timer } = card;
-        // 4:2:0 chroma covers 2 × 2 pixels: grow the per-frame layers to even rows so they
-        // replace whole chroma blocks; the extra rows are the card's plain background.
+        // 4:2:0 chroma covers 2 × 2 pixels: grow the row to even bounds so it replaces
+        // whole chroma blocks; the extra rows and columns are the card's plain background.
         const lift = (card.y + wave.y) % 2;
         const rows = wave.height + lift + ((wave.height + lift) % 2);
-        const layer = `crop=${wave.width}:${rows}:${wave.x}:${wave.y - lift}`;
-        const top = card.y + wave.y - lift;
+        const shift = (card.x + wave.x) % 2;
+        const columns = wave.width + shift + ((wave.width + shift) % 2);
         const played = `min(${wave.width},floor(${wave.width}*t/${duration}))`;
-        const repeat = `loop=loop=-1:size=1,setpts=N/(${fps}*TB),`;
+        // The slides' time base: an image input's own 1/25 would round t differently in
+        // each filter, and the layers would disagree on the position.
+        const repeat = `loop=loop=-1:size=1,settb=1/${fps},setpts=N`;
         const edge = `min(1,${wave.width}*T/${duration}-floor(${wave.width}*T/${duration}))`;
         const timerText = join(work, "timer.txt");
         yield* attempt("Write timer template", () =>
@@ -278,15 +276,19 @@ export class Media extends Context.Service<
           slides.join("") +
             `${pictures.map((_, index) => `[slide${index}]`).join("")}` +
             `concat=n=${pictures.length}:v=1:a=0,settb=1/${fps},setpts=N,fps=${fps}[slides];` +
-            `[${audioInput + 1}:v]${layer},format=rgba,` +
-            `pad=${wave.width * 2}:${rows}:0:0:color=0x00000000,${repeat}` +
-            `crop=${wave.width}:${rows}:'${played}':0,${yuv}format=yuva420p[unplayed];` +
-            `[${audioInput + 2}:v]${layer},format=rgba,` +
-            `pad=${wave.width + 1}:${rows}:0:0:color=0x00000000,${repeat}` +
+            `[${audioInput + 1}:v]crop=${columns}:${rows}:${wave.x - shift}:${wave.y - lift},` +
+            `format=rgb24,${repeat}[unplayed];` +
+            `[${audioInput + 2}:v]crop=${wave.width}:${rows}:${wave.x}:${wave.y - lift},` +
+            `format=rgba,split[bars][column];` +
+            `[bars]pad=${wave.width * 2}:${rows}:${wave.width}:0:color=0x00000000,${repeat},` +
+            `crop=${wave.width}:${rows}:'${played}':0[fill];` +
+            `[column]pad=${wave.width + 1}:${rows}:0:0:color=0x00000000,${repeat},` +
             `crop=1:${rows}:'${played}':0,` +
-            `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${edge}',${yuv}format=yuva420p[edge];` +
-            `[slides][unplayed]overlay=x='${card.x + wave.x}+${played}':y=${top}:format=yuv420[covered];` +
-            `[covered][edge]overlay=x='${card.x + wave.x}+${played}':y=${top}:format=yuv420,` +
+            `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${edge}'[edge];` +
+            `[unplayed][fill]overlay=x='${shift - wave.width}+${played}':y=0:format=rgb[filled];` +
+            `[filled][edge]overlay=x='${shift}+${played}':y=0:format=rgb,` +
+            `${yuv}format=yuva420p[wave];` +
+            `[slides][wave]overlay=x=${card.x + wave.x - shift}:y=${card.y + wave.y - lift}:format=yuv420,` +
             `drawtext=fontfile='${Paths.cardFont}':textfile='${timerText}':fontcolor=0x8f9eab:` +
             `fontsize=${timer.size}:x=${card.x + timer.x}:y=${card.y + timer.y}[video]`,
           "-t",
