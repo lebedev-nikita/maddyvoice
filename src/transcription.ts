@@ -1,10 +1,10 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Config, Context, Effect, Layer, Redacted } from "effect";
+import { Config, Context, Effect, Layer, Redacted, Schema } from "effect";
 import OpenAI, { toFile } from "openai";
 import { AppError, attempt, Paths, safeMessage, Settings } from "./core.ts";
 import { downloadMedia } from "./media.ts";
-import { autocorrect, readNames } from "./names.ts";
+import { autocorrect, findTriggers, NameChecker, readNames } from "./names.ts";
 import type { Post } from "./telegram.ts";
 
 // The transcription endpoint accepts files up to 25 MB.
@@ -38,6 +38,7 @@ export class Transcriber extends Context.Service<
     Transcriber,
     Effect.gen(function* () {
       const config = yield* Settings;
+      const checker = yield* NameChecker;
       const apiKey = yield* Config.Redacted("OPENAI_TRANSCRIPTION_API_KEY");
       const model = yield* Config.String("TRANSCRIPTION_MODEL").pipe(
         Config.withDefault("gpt-4o-transcribe"),
@@ -90,12 +91,33 @@ export class Transcriber extends Context.Service<
         });
         return text.trim();
       }, Effect.scoped);
+      // Verdicts on common words that may be names are kept beside the transcript, so the
+      // model is asked once per word occurrence.
+      const Verdicts = Schema.Record(Schema.String, Schema.Boolean);
       const transcribe = Effect.fn("Transcriber.transcribe")(function* (
         post: Post,
         audioIndex: number,
       ) {
         const heard = yield* recognise(post, audioIndex);
-        return autocorrect(heard, yield* readNames(Paths.names));
+        const names = yield* readNames(Paths.names);
+        const triggers = findTriggers(heard, names);
+        const saved = join(directory, `${config.channel}-${post.id}-${audioIndex}.names.json`);
+        const known = yield* Effect.promise(() =>
+          readFile(saved, "utf8")
+            .then((text) => Schema.decodeUnknownSync(Verdicts)(JSON.parse(text)))
+            .catch(() => ({}) as Record<string, boolean>),
+        );
+        const unknown = triggers.filter((trigger) => !(trigger.key in known));
+        const verdicts = { ...known, ...Object.fromEntries(yield* checker.judge(unknown)) };
+        if (unknown.length)
+          yield* attempt("Save name verdicts", async () => {
+            await writeFile(`${saved}.new`, JSON.stringify(verdicts), { mode: 0o600 });
+            await rename(`${saved}.new`, saved);
+          });
+        const confirmed = new Set(
+          triggers.filter((trigger) => verdicts[trigger.key]).map((trigger) => trigger.key),
+        );
+        return autocorrect(heard, names, confirmed);
       });
       return Transcriber.of({ transcribe });
     }),

@@ -1,7 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vite-plus/test";
+import { Effect, Layer } from "effect";
 import { Paths } from "../src/core.ts";
-import { autocorrect, decodeNames } from "../src/names.ts";
+import { ModelProxy } from "../src/model.ts";
+import {
+  autocorrect,
+  decodeNames,
+  findTriggers,
+  NameChecker,
+  triggerPrompt,
+} from "../src/names.ts";
 
 const names = decodeNames([
   { name: "Сасавот", aliases: ["Сосавот", "Сасыч"] },
@@ -9,7 +17,9 @@ const names = decodeNames([
   { name: "Анар Абдулаев", aliases: ["Анал Обдуваев"] },
   { name: "VJLink", aliases: ["Виджелинк", "Виджей Линк"] },
   { name: "Твич", aliases: ["Twitch"] },
-  { name: "Давг", aliases: [{ text: "давка", context: ["Baby Steps"] }] },
+  { name: "Давг", aliases: [{ text: "давка", meaning: "Давг — стример" }] },
+  { name: "Кологривый", aliases: ["Калогривый"] },
+  { name: "Факер", aliases: ["факер", "MistaFaker"] },
   { name: "Человек-паук 2", aliases: ["Человек паук 2"] },
   { name: "Человек-паук", aliases: ["Человек паук"] },
 ]);
@@ -29,11 +39,59 @@ describe("names dictionary", () => {
     );
   });
 
-  it("applies a contextual alias only near its hint", () => {
-    expect(autocorrect("Вот все играют в Baby Steps, давка прошел.", names)).toBe(
-      "Вот все играют в Baby Steps, Давг прошел.",
+  it("declines adjectival surnames and fixes the case of a nickname", () => {
+    expect(autocorrect("у Калогривого и Калогривым", names)).toBe("у Кологривого и Кологривым");
+    expect(autocorrect("факер и MistaFaker", names)).toBe("Факер и Факер");
+  });
+
+  it("turns a common word into a name only where a verdict confirms it", () => {
+    const text = "Вот все играют в Baby Steps, давка прошел. В метро была давка.";
+    const triggers = findTriggers(text, names);
+    expect(triggers.map((trigger) => [trigger.heard, trigger.replacement])).toEqual([
+      ["давка", "Давг"],
+      ["давка", "Давг"],
+    ]);
+    expect(autocorrect(text, names)).toBe(text);
+    expect(autocorrect(text, names, new Set([triggers[0]!.key]))).toBe(
+      "Вот все играют в Baby Steps, Давг прошел. В метро была давка.",
     );
-    expect(autocorrect("В метро была давка.", names)).toBe("В метро была давка.");
+    expect(findTriggers(text, names)[1]!.key).toBe(triggers[1]!.key);
+  });
+
+  it("asks the model once for all trigger words and requires a verdict for each", async () => {
+    const triggers = findTriggers("давка прошел, а в метро давка", names);
+    const prompts: string[] = [];
+    const judge = (verdicts: unknown) =>
+      Effect.runPromise(
+        NameChecker.use((checker) => checker.judge(triggers)).pipe(
+          Effect.provide(
+            NameChecker.layer.pipe(
+              Layer.provide(
+                Layer.succeed(
+                  ModelProxy,
+                  ModelProxy.of({
+                    model: "test",
+                    json: (request) => {
+                      prompts.push(request.prompt);
+                      return Effect.succeed(verdicts);
+                    },
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    const verdicts = await judge({
+      verdicts: [
+        { id: 0, name: true },
+        { id: 1, name: false },
+      ],
+    });
+    expect([...verdicts.values()]).toEqual([true, false]);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toBe(triggerPrompt(triggers));
+    await expect(judge({ verdicts: [{ id: 0, name: true }] })).rejects.toThrow();
   });
 
   it("matches whole words and never rewrites a correction", () => {

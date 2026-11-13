@@ -7,6 +7,8 @@ import { attempt, json, Settings } from "./core.ts";
 import { getCursor, listJobs, Store, withWorkerLock } from "./database.ts";
 import { previewEpisode } from "./episode-preview.ts";
 import { Media } from "./media.ts";
+import { ModelProxy } from "./model.ts";
+import { NameChecker } from "./names.ts";
 import { manageService } from "./service.ts";
 import { Telegram } from "./telegram.ts";
 import {
@@ -162,11 +164,13 @@ const preview = Command.make(
 );
 
 // An episode preview reads no queue and publishes nothing; it needs the transcription key
-// instead of the database and YouTube.
-const episodeServices = Layer.mergeAll(Telegram.layer, Media.layer, Transcriber.layer).pipe(
-  Layer.provideMerge(Settings.layer),
-  Layer.provideMerge(BunServices.layer),
-);
+// and the model proxy, which decides whether common words are names, instead of the
+// database and YouTube.
+const episodeServices = Layer.mergeAll(
+  Telegram.layer,
+  Media.layer,
+  Transcriber.layer.pipe(Layer.provide(NameChecker.layer), Layer.provide(ModelProxy.layer)),
+).pipe(Layer.provideMerge(Settings.layer), Layer.provideMerge(BunServices.layer));
 const episodePreview = Command.make(
   "preview-episode",
   { message: Argument.Int("message-id").pipe(Argument.withSchema(positive)) },

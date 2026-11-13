@@ -31,4 +31,6 @@ spends the proxy's Codex usage limits.
 `preview-episode` transcribes voices through the OpenAI API itself
 (`Transcriber` in `src/transcription.ts`, `OPENAI_TRANSCRIPTION_API_KEY`). That
 key is restricted to `/v1/audio` and is never sent to the proxy; each new voice
-costs money once, then its transcript is read from `DATA_DIR/transcripts`.
+costs money once, then its transcript is read from `DATA_DIR/transcripts`. It also
+asks `ModelProxy` whether common words listed in `assets/names.json` stand for
+names, once per occurrence (`DATA_DIR/transcripts/*.names.json`).

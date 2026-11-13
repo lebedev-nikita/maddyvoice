@@ -74,10 +74,12 @@ games and services that Maddyson writes about, most important first. It was
 compiled from his own text posts and the comments under them, and is meant to be
 passed to the recogniser as keywords (at most 900). Its aliases fix what the
 recogniser still gets wrong: a misheard spelling is replaced by the name with the
-same Russian ending (`Виджелинку` → `VJLink`, `Сосавоту` → `Сасавоту`), and an alias
-with `context` applies only when one of its hints is within 300 characters.
-Saved transcripts keep what was heard; names are corrected each time a
-transcript is read, so a new alias also fixes older transcripts.
+same Russian ending (`Виджелинку` → `VJLink`, `Сосавоту` → `Сасавоту`). An alias
+that is also a common word (`давка`, `насрал`) carries a `meaning`; each time it
+is heard, a model decides from the surrounding text whether it stands for the
+name, and the verdict is kept in `data/transcripts/*.names.json`. Saved
+transcripts keep what was heard; names are corrected each time a transcript is
+read, so a new alias also fixes older transcripts.
 
 ## Connect a new YouTube channel
 
