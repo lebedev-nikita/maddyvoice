@@ -110,6 +110,9 @@ function wordRule(heard: string, written: string) {
       pattern: heardPattern(heard),
       replace: (ending: string) => stem(written) + ending.toLocaleLowerCase("ru-RU"),
     };
+  // A name ending in о, е, и, у or ю does not decline (Зио): every form of the alias is the name.
+  if (cyrillic.test(written) && /[оеиуэю]$/iu.test(written))
+    return { pattern: heardPattern(heard), replace: () => written };
   // A word declines with its ending only when both spellings decline alike.
   const declines = cyrillic.test(heard) && vowelFinal(heard) === vowelFinal(written);
   if (!declines) return { pattern: `${escape(heard)}()`, replace: () => written };
@@ -133,8 +136,9 @@ function aliasRule(alias: Alias, name: string) {
     : heard.length === written.length
       ? heard.map((word, index) => wordRule(word, written[index]!))
       : [wordRule(heard.join(" "), name)];
+  // Whole words only, and never part of a link or an address (nasral.pro).
   const pattern = new RegExp(
-    `(?<![\\p{L}\\p{N}_])${words.map((word) => word.pattern).join("\\s+")}(?![\\p{L}\\p{N}_])`,
+    `(?<![\\p{L}\\p{N}_]|[./@])${words.map((word) => word.pattern).join("\\s+")}(?![\\p{L}\\p{N}_]|[./@][\\p{L}\\p{N}])`,
     "giu",
   );
   const correct = (groups: readonly unknown[]) =>

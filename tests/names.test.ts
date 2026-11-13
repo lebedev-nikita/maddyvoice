@@ -17,7 +17,8 @@ const names = decodeNames([
   { name: "Галя", aliases: ["Гхаля", "Гхалка"] },
   { name: "Анар Абдулаев", aliases: ["Анал Обдуваев"] },
   { name: "VJLink", aliases: ["Виджелинк", "Виджей Линк", "Рыжий Демон"] },
-  { name: "Озон", aliases: ["озон"] },
+  { name: "Озон", aliases: ["озон", "Азон"] },
+  { name: "Зио", aliases: ["Зива"] },
   { name: "BadComedian", aliases: ["Бед Комедиан"] },
   { name: "Твич", aliases: ["Twitch"] },
   { name: "Давг", aliases: [{ text: "давка", meaning: "Давг — стример" }] },
@@ -47,6 +48,7 @@ describe("names dictionary", () => {
 
   it("declines adjectival surnames and fixes the case of a nickname", () => {
     expect(autocorrect("у Калогривого и Калогривым", names)).toBe("у Кологривого и Кологривым");
+    expect(autocorrect("Зива и Зиву, у Азона", names)).toBe("Зио и Зио, у Озона");
     expect(autocorrect("факер и MistaFaker", names)).toBe("Факер и Факер");
   });
 
@@ -102,6 +104,7 @@ describe("names dictionary", () => {
 
   it("matches whole words and never rewrites a correction", () => {
     expect(autocorrect("Сосавотик и Человек паук 2", names)).toBe("Сосавотик и Человек-паук 2");
+    expect(autocorrect("сайт Сосавот.ru и @Сосавот", names)).toBe("сайт Сосавот.ru и @Сосавот");
   });
 
   it("hints the names of nearby posts first, in any form the dictionary knows", () => {
@@ -111,6 +114,7 @@ describe("names dictionary", () => {
       "Озон",
       "Галя",
       "Анар Абдулаев",
+      "Зио",
       "BadComedian",
       "Твич",
       "Давг",
