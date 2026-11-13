@@ -62,7 +62,8 @@ voice in seconds, the text posts shown with it and the posts left out;
 Text posts published from three hours before the first voice to three hours
 after the last are shown on the card under the voice they belong to by meaning,
 one at a time; posts longer than 700 characters take several pages. Screen time
-is divided by text length. A post's own photos fill the frame while it is shown.
+is divided by text length. A post's photos come first, in a bubble of their own
+laid out like a Telegram album, so the scene behind the card stays the voice's.
 Forwarded posts, posts without text, obvious third-party advertising and posts
 unrelated to every voice are left out; Maddyson's own streams and projects stay.
 

@@ -208,17 +208,21 @@ try {
     logo.every((channel) => channel > 180),
     "YouTube branding must be visible",
   );
-  // The card sits right of x=896; count its white bubble and blue (played) waveform pixels.
-  const cardPixels = async (time: number) => {
-    const frame = await pixels(time, "988:1040:896:20");
-    let white = 0;
-    let blue = 0;
-    for (let offset = 0; offset < frame.length; offset += 3) {
-      const [r = 0, g = 0, b = 0] = frame.subarray(offset, offset + 3);
-      if (Math.min(r, g, b) > 245) white++;
-      if (Math.hypot(r - 64, g - 167, b - 227) < 30) blue++;
-    }
-    return { white, blue };
+  // The card sits right of x=896; count its white bubble, blue (played) waveform pixels and
+  // pure blue ones from the fake blue photo.
+  const count = (frame: Buffer, test: (r: number, g: number, b: number) => boolean) => {
+    let matches = 0;
+    for (let offset = 0; offset < frame.length; offset += 3)
+      if (test(frame[offset]!, frame[offset + 1]!, frame[offset + 2]!)) matches++;
+    return matches;
+  };
+  const cardPixels = async (time: number, path = output.path) => {
+    const frame = await pixels(time, "988:1040:896:20", path);
+    return {
+      white: count(frame, (r, g, b) => Math.min(r, g, b) > 245),
+      blue: count(frame, (r, g, b) => Math.hypot(r - 64, g - 167, b - 227) < 30),
+      photo: count(frame, (r, g, b) => Math.hypot(r, g, b - 255) < 60),
+    };
   };
   const early = await cardPixels(0.2);
   const late = await cardPixels(3.8);
@@ -306,14 +310,19 @@ try {
   );
   assert(Math.abs(episode.duration - 2 * duration) < 0.2, `Episode lasts ${episode.duration}s`);
   const scene = async (time: number) => [...(await pixels(time, "1:1:400:540", episode.path))];
-  const [first, second, third] = [await scene(1), await scene(3), await scene(5)];
+  const [first, third] = [await scene(1), await scene(5)];
+  // The fake reaction emoji are blue as well, so the next post is the baseline.
+  const [shownPhoto, nextPost] = [
+    (await cardPixels(1, episode.path)).photo,
+    (await cardPixels(3, episode.path)).photo,
+  ];
   assert(
-    first[2]! > 150 && first[0]! < 80,
-    `A text post's photo must fill the frame: ${first.join(",")}`,
+    !(first[2]! > 150 && first[0]! < 80 && first[1]! < 80),
+    `A text post's photo must not replace the background: ${first.join(",")}`,
   );
   assert(
-    !(second[2]! > 150 && second[0]! < 80 && second[1]! < 80),
-    `The next text post must return to the background: ${second.join(",")}`,
+    shownPhoto > nextPost + 50_000,
+    `A text post's photo must appear in its bubble only: ${shownPhoto} -> ${nextPost} pixels`,
   );
   assert(
     third[0]! > 150 && third[2]! < 80,

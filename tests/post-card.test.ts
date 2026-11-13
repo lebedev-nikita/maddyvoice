@@ -99,4 +99,23 @@ describe("text post slides", () => {
     expect(alone).not.toContain('class="bubble post"');
     expect(alone).not.toContain('class="position"');
   });
+
+  it("shows a post's photos in a bubble of their own before its text, in rows of three", () => {
+    const photos = ["a", "b", "c", "d", "e"].map((name) => `data:image/png;base64,${name}`);
+    const long = { ...text, text: "Длинное предложение. ".repeat(60), images: photos };
+    const slides = textSlides([long]);
+    expect(slides.map((slide) => [slide.photos.length, slide.page, slide.pages])).toEqual([
+      [5, 0, 0],
+      [0, 1, 2],
+      [0, 2, 2],
+    ]);
+    const html = cardHtml(post, 0, { avatar: "", reactions: ["", ""] }, "", slides);
+    const bubbles = html.split('<div class="bubble post').slice(1);
+    expect(bubbles).toHaveLength(3);
+    expect(bubbles[0]).toMatch(/^ photos">/);
+    expect(bubbles[0]!.match(/class="row"/g)).toHaveLength(2);
+    expect(bubbles[0]!.match(/<img /g)).toHaveLength(5);
+    expect(bubbles[0]).not.toContain('class="text"');
+    expect(bubbles.slice(1).join("")).not.toContain("<img ");
+  });
 });

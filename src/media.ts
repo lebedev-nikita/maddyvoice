@@ -209,30 +209,31 @@ export class Media extends Context.Service<
         const duration = yield* probeDuration(audioPath);
         const fps = 30;
         // Attached photos fill the frame; otherwise each post rotates through the backgrounds.
-        // While a text post is on the card its own photos replace the voice's.
-        const background = backgrounds[post.id % backgrounds.length]!;
+        const attached = post.images.length > 0;
+        const pictures = attached ? post.images : [backgrounds[post.id % backgrounds.length]!];
         const card = yield* postCard.render(post, audioIndex, work, texts, position);
-        const scenes = card.slides.flatMap((slide) => {
-          const photos = slide.post?.images.length ? slide.post.images : post.images;
-          const pictures = photos.length > 0 ? photos : [background];
-          return pictures.map((picture) => ({
-            picture,
-            attached: photos.length > 0,
-            card: slide.image,
-            weight: slide.weight / pictures.length,
+        // Pictures share the voice evenly and card slides by weight; a scene lasts while
+        // neither changes, so one too brief to get a frame disappears.
+        const startFrames = (weights: readonly number[]) => {
+          const total = weights.reduce((sum, weight) => sum + weight, 0);
+          let elapsed = 0;
+          return weights.map((weight) => {
+            const start = Math.round((elapsed / total) * duration * fps);
+            elapsed += weight;
+            return start;
+          });
+        };
+        const pictureStarts = startFrames(pictures.map(() => 1));
+        const slideStarts = startFrames(card.slides.map((slide) => slide.weight));
+        const current = (starts: readonly number[], frame: number) =>
+          starts.findLastIndex((start) => start <= frame);
+        const shown = [...new Set([...pictureStarts, ...slideStarts])]
+          .sort((a, b) => a - b)
+          .map((start) => ({
+            start,
+            picture: pictures[current(pictureStarts, start)]!,
+            card: card.slides[current(slideStarts, start)]!.image,
           }));
-        });
-        const total = scenes.reduce((sum, scene) => sum + scene.weight, 0);
-        let elapsed = 0;
-        const starts = scenes.map((scene) => {
-          const start = Math.round((elapsed / total) * duration * fps);
-          elapsed += scene.weight;
-          return start;
-        });
-        // A scene too brief to get a frame is dropped rather than held forever.
-        const shown = scenes
-          .map((scene, index) => ({ ...scene, start: starts[index]! }))
-          .filter((scene, index) => starts[index + 1] !== scene.start);
         const downloaded = new Map<string, string>();
         const photo = Effect.fn("Media.photo")(function* (url: string) {
           const saved = downloaded.get(url);
@@ -245,7 +246,7 @@ export class Media extends Context.Service<
           return path;
         });
         for (const [index, scene] of shown.entries()) {
-          const input = scene.attached ? yield* photo(scene.picture) : scene.picture;
+          const input = attached ? yield* photo(scene.picture) : scene.picture;
           yield* execute(config.ffmpeg, [
             "-nostdin",
             "-v",
@@ -262,7 +263,7 @@ export class Media extends Context.Service<
             "-filter_complex",
             "[0:v]scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos," +
               "crop=1920:1080:(iw-ow)/2:(ih-oh)/2," +
-              `setsar=1,${scene.attached ? "eq=saturation=0.94," : ""}format=rgba[photo];` +
+              `setsar=1,${attached ? "eq=saturation=0.94," : ""}format=rgba[photo];` +
               `[photo][1:v]overlay=0:840:format=auto[branded];` +
               `[branded][2:v]overlay=${card.x}:${card.y}:format=auto,format=rgb24[frame]`,
             "-map",

@@ -20,8 +20,6 @@ type CardLayers = {
    */
   readonly slides: readonly {
     readonly image: string;
-    /** Text post shown under the voice; absent when the voice stands alone. */
-    readonly post?: Post;
     /** Relative screen time. */
     readonly weight: number;
   }[];
@@ -42,12 +40,17 @@ type CardLayers = {
 
 export type CardImages = { readonly avatar: string; readonly reactions: readonly string[] };
 
-/** One screen of a text post shown under the voice; a long post takes several. */
+/**
+ * One screen of a text post shown under the voice: its photos in a bubble of their own,
+ * then its text, which a long post spreads over several pages.
+ */
 export type TextSlide = {
   readonly post: Post;
   readonly text: string;
   readonly page: number;
   readonly pages: number;
+  /** Set on the photo slide only, which has no text. */
+  readonly photos: readonly string[];
 };
 
 // Coarsest break first: a page ends between paragraphs when it can, inside a word never.
@@ -111,14 +114,30 @@ export function textPages(text: string, limit = 700): string[] {
 }
 
 export const textSlides = (texts: readonly Post[]): TextSlide[] =>
-  texts.flatMap((post) =>
-    textPages(post.text).map((text, index, pages) => ({
+  texts.flatMap((post) => [
+    ...(post.images.length ? [{ post, text: "", page: 0, pages: 0, photos: post.images }] : []),
+    ...textPages(post.text).map((text, index, pages) => ({
       post,
       text,
       page: index + 1,
       pages: pages.length,
+      photos: [],
     })),
-  );
+  ]);
+
+// Photos sit in rows of up to three, like a Telegram album.
+const album = (photos: readonly string[]) => {
+  const rows = Math.ceil(photos.length / 3);
+  const html = Array.from({ length: rows }, (_, row) => {
+    const from = Math.round((row * photos.length) / rows);
+    const to = Math.round(((row + 1) * photos.length) / rows);
+    return `<div class="row">${photos
+      .slice(from, to)
+      .map((photo) => `<img src="${photo}">`)
+      .join("")}</div>`;
+  });
+  return photos.length ? `<div class="media">${html.join("")}</div>` : "";
+};
 
 const paragraphs = (text: string) =>
   text
@@ -168,10 +187,11 @@ export function cardHtml(
       : `<span class="glyph">${escapeHtml(reaction.emoji)}</span>`;
     return `<span class="reaction">${icon}${escapeHtml(reaction.count)}</span>`;
   });
-  const posts = slides.map(
-    (slide) =>
-      `<div class="bubble post"><div class="text">${paragraphs(slide.text)}</div>` +
-      `<div class="footer">${slide.pages > 1 ? `<span class="page">${slide.page} / ${slide.pages}</span>` : ""}${footer(slide.post)}</div></div>`,
+  const posts = slides.map((slide) =>
+    slide.photos.length
+      ? `<div class="bubble post photos">${album(slide.photos)}</div>`
+      : `<div class="bubble post"><div class="text">${paragraphs(slide.text)}</div>` +
+        `<div class="footer">${slide.pages > 1 ? `<span class="page">${slide.page} / ${slide.pages}</span>` : ""}${footer(slide.post)}</div></div>`,
   );
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 @font-face { font-family: Roboto; src: url("${font}"); font-weight: 100 900; }
@@ -206,6 +226,10 @@ html, body { background: transparent; font-family: Roboto, sans-serif; -webkit-f
 .footer svg { margin-right: 1px; }
 .post { margin-top: 8px; padding-top: 10px; }
 .page { margin-right: auto; }
+.photos { width: fit-content; padding: 0; overflow: hidden; }
+.media, .media .row { display: flex; gap: 2px; }
+.media { flex-direction: column; }
+.media img { display: block; object-fit: cover; }
 body.played .bubble > *:not(.voice), body.played .voice > *:not(.wave-wrap), body.played .duration { visibility: hidden; }
 body.played .bubble { background: none; box-shadow: none; }
 </style></head><body>
@@ -220,6 +244,9 @@ body.played .bubble { background: none; box-shadow: none; }
 </body></html>`;
 }
 
+// Tallest a photo bubble grows, and the least height it may take before the type shrinks.
+const photoHeight = { max: 520, min: 140 };
+
 // Runs inside the page. show() leaves one text post visible; fit() picks the scale that
 // holds every slide; draw() paints the waveform in device pixels.
 const pageScript = `
@@ -227,12 +254,30 @@ const card = document.querySelector(".card"), caption = document.querySelector("
 const posts = [...document.querySelectorAll(".post")];
 const slides = posts.length ? posts.map((_, index) => index) : [0];
 const box = (element) => { const r = element.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; };
+// A photo bubble takes the height left under the voice; photos in a row share one height
+// and keep their proportions, and every row stays within the card's width.
+const album = (post, limit, width) => {
+  const rows = [...post.querySelector(".media").children];
+  const size = (height) => rows.forEach((row) => {
+    const photos = [...row.children];
+    const ratios = photos.map((photo) => photo.naturalWidth / photo.naturalHeight || 1);
+    const sum = ratios.reduce((total, ratio) => total + ratio, 0);
+    const fitted = Math.max(0, Math.min(height / rows.length, (width - 2 * (photos.length - 1)) / sum));
+    photos.forEach((photo, index) => { photo.style.height = fitted + "px"; photo.style.width = fitted * ratios[index] + "px"; });
+  });
+  size(0);
+  const free = limit - card.getBoundingClientRect().height;
+  size(Math.min(free, ${photoHeight.max}));
+  return free >= ${photoHeight.min};
+};
 window.show = (slide) => posts.forEach((post, index) => { post.style.display = index === slide ? "" : "none"; });
 window.fit = (scales, area, padding) => {
   const fits = (scale, slide) => {
     card.style.width = area.width / scale + padding.width + "px";
     show(slide);
-    return card.getBoundingClientRect().height <= area.height / scale + padding.height;
+    const limit = area.height / scale + padding.height;
+    if (posts[slide]?.classList.contains("photos")) return album(posts[slide], limit, area.width / scale);
+    return card.getBoundingClientRect().height <= limit;
   };
   for (const scale of scales) if (slides.every((slide) => fits(scale, slide))) return scale;
   // Even the smallest type overflows: drop whole lines from the end of the slide's post,
@@ -352,7 +397,6 @@ export class PostCard extends Context.Service<
         texts: readonly Post[] = [],
         position = "",
       ) {
-        const pages = textSlides(texts);
         const images = yield* attempt("Download post card images", async (signal) => ({
           avatar: post.card?.avatar ? await imageData([post.card.avatar], signal) : "",
           reactions: await Promise.all(
@@ -363,6 +407,19 @@ export class PostCard extends Context.Service<
             ),
           ),
         }));
+        // Photos that cannot be downloaded are left out, and so is a bubble left empty.
+        const pages = yield* attempt("Download text post photos", async (signal) =>
+          (
+            await Promise.all(
+              textSlides(texts).map(async (slide) => ({
+                ...slide,
+                photos: (
+                  await Promise.all(slide.photos.map((photo) => imageData([photo], signal)))
+                ).filter(Boolean),
+              })),
+            )
+          ).filter((slide) => slide.text || slide.photos.length),
+        );
         const font = yield* attempt(
           "Read card font",
           async () => `data:font/ttf;base64,${(await readFile(Paths.cardFont)).toString("base64")}`,
@@ -374,8 +431,8 @@ export class PostCard extends Context.Service<
         // A voice without text posts is a single slide.
         const slides = (pages.length ? pages : [undefined]).map((page, index) => ({
           image: join(work, `card-${index}.png`),
-          post: page?.post,
-          weight: Math.max(page?.text.length ?? 0, 150),
+          // A photo bubble stays up as long as a post of 250 characters.
+          weight: page?.photos.length ? 250 : Math.max(page?.text.length ?? 0, 150),
         }));
         const played = join(work, "card-played.png");
         const geometry = yield* attempt("Render post card", async () => {
