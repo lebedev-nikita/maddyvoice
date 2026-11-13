@@ -202,8 +202,13 @@ checks pushes and pull requests; it does not deploy to the Pi.
 
 ## Topic titles from YouTube captions
 
-Publication requires `TOPICS_URL=http://127.0.0.1:11435` and a running topic
-service. The worker names uploaded videos as
+This path titles single voices, the ones published before
+[episodes](#episodes); episodes are titled by the worker itself. In production the
+topic service is switched off and is turned on only to retitle those videos (see
+[deployment](deploy/README.md#topic-service)).
+
+Publishing a single voice requires `TOPICS_URL=http://127.0.0.1:11435` and a
+running topic service. The worker names uploaded videos as
 `Мэддисон <action and topic>`, without a trailing signature. Original publication
 dates stay in the description.
 Titles use a short direct action or `Мэддисон о <topic>`, without introductory

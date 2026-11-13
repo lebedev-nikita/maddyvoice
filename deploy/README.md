@@ -8,14 +8,17 @@ Deployment is manual over SSH. Pushing to `origin/main` does not update the Pi:
 verification, analysis and a build, without a deployment step. There is no
 deployment script or automatic pull on the Pi.
 
-Two systemd services run the application:
+[maddyvoice.service](maddyvoice.service) runs the application as `maddyvoice`: it
+polls Telegram, merges voices into episodes, transcribes and titles them through
+the OpenAI audio API and the local CLIProxyAPI, renders videos with FFmpeg and
+publishes them to YouTube.
 
-- [maddyvoice.service](maddyvoice.service) polls Telegram, renders videos with
-  FFmpeg, publishes to YouTube and manages title retries as `maddyvoice`.
-- [maddyvoice-topics.service](maddyvoice-topics.service) generates topics through
-  the local CLIProxyAPI as `pi`, listening only on `127.0.0.1:11435`.
+[maddyvoice-topics.service](maddyvoice-topics.service), the [topic service](#topic-service)
+that titled single voices from YouTube captions and Telegram comments, is
+switched off since 2026-11-14 and disabled at boot. Its unit and state stay on
+the Pi for retitling the single videos published before episodes.
 
-Both run TypeScript source directly with the pinned Bun in
+The worker runs TypeScript source directly with the pinned Bun in
 `/opt/maddyvoice/bin/bun`; the `dist` build is not used by the services.
 
 | Location                                  | Purpose                                                |
@@ -73,7 +76,7 @@ below. Existing YouTube publication dates cannot be reordered by a code update.
    services and verify they have exited; do not run manual jobs during rollout:
 
    ```sh
-   sudo systemctl stop maddyvoice maddyvoice-topics
+   sudo systemctl stop maddyvoice
    ```
 
    Before applying schema changes, take a verified cold backup as described in
@@ -106,10 +109,11 @@ below. Existing YouTube publication dates cannot be reordered by a code update.
 
    ```sh
    sudo -u maddyvoice /opt/maddyvoice/deploy/maddyvoice status
-   sudo systemctl start maddyvoice-topics
-   curl --fail --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:11435/health
    sudo systemctl start maddyvoice
    ```
+
+   Leave `maddyvoice-topics` stopped and disabled; installing its unit does not
+   start it.
 
    Opening BoxDB applies pending migrations automatically, including when using
    `status`. The wrapper loads `/etc/maddyvoice.env`; running `bun` directly from
@@ -167,10 +171,7 @@ From the Mac:
 
 ```sh
 ssh pi 'sudo systemctl status maddyvoice --no-pager'
-ssh pi 'sudo systemctl status maddyvoice-topics --no-pager'
 ssh pi 'sudo journalctl -u maddyvoice -n 50 --no-pager'
-ssh pi 'sudo journalctl -u maddyvoice-topics -n 30 --no-pager'
-ssh pi 'curl --fail http://127.0.0.1:11435/health'
 ssh pi 'sudo systemctl restart maddyvoice'
 ```
 
@@ -229,11 +230,25 @@ OPENAI_TRANSCRIPTION_API_KEY=<OpenAI key restricted to /v1/audio>
 ```
 
 The migration that introduces episodes takes the live cursor as the switch:
-recordings already queued publish one by one, newer ones as episodes. Keep the
-topic service running until no single recording waits for its title. Transcripts
+recordings already queued publish one by one, newer ones as episodes; the topic
+service was needed until no single recording waited for its title. Transcripts
 are kept in the publisher's BoxDB and backed up with it.
 
 ## Topic service
+
+The topic service is switched off: episodes are titled by the publisher itself.
+It is only needed again to retitle single videos published before episodes
+(`titles --regenerate`) or to publish a single voice imported from history below
+the switch point. Turn it on for that and off again afterwards:
+
+```sh
+sudo systemctl enable --now maddyvoice-topics
+curl --fail --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:11435/health
+# Uncomment TOPICS_URL in /etc/maddyvoice.env, then restart the publisher.
+sudo systemctl restart maddyvoice
+```
+
+The rest of this section describes the service when it runs.
 
 `maddyvoice-topics.service` runs the loopback topic endpoint on port `11435` as
 `pi`. The publisher keeps its separate `maddyvoice` account and private YouTube
@@ -248,7 +263,7 @@ Caption text and selected comment bodies are sent to OpenAI through the proxy,
 using the Codex account's usage limits. It does not need Ollama, local model
 weights or a paid transcription key.
 
-The publisher environment contains:
+While the service runs, the publisher environment contains:
 
 ```dotenv
 TOPICS_URL=http://127.0.0.1:11435
