@@ -29,7 +29,8 @@ function episodeOf(posts: Iterable<Post>, messageId: number) {
 /**
  * The episode containing a voice. Reads the feed outwards from the voice until a full gap
  * without voices lies on both sides; `complete` is false while later voices may still join.
- * `nearby` are the author's text posts within half a gap of the episode's voices.
+ * `notes` are the author's text posts within half a gap of the episode's voices, `nearby`
+ * their texts.
  */
 export const episodeAround = Effect.fn("episodeAround")(function* (messageId: number) {
   const telegram = yield* Telegram;
@@ -71,17 +72,20 @@ export const episodeAround = Effect.fn("episodeAround")(function* (messageId: nu
       yield* loadDownTo(ahead, latest.id);
     } else {
       const now = DateTime.toEpochMillis(yield* DateTime.now);
-      const nearby = feed
-        .filter(
-          (post) =>
-            !post.forwarded &&
-            post.audio.length === 0 &&
-            post.text.trim() &&
-            time(post) >= first - episodeGapMs / 2 &&
-            time(post) < last + episodeGapMs / 2,
-        )
-        .map((post) => post.text);
-      return { episode, nearby, complete: latest.id < newest || now - last >= episodeGapMs };
+      const notes = feed.filter(
+        (post) =>
+          !post.forwarded &&
+          post.audio.length === 0 &&
+          post.text.trim() &&
+          time(post) >= first - episodeGapMs / 2 &&
+          time(post) < last + episodeGapMs / 2,
+      );
+      return {
+        episode,
+        notes,
+        nearby: notes.map((post) => post.text),
+        complete: latest.id < newest || now - last >= episodeGapMs,
+      };
     }
   }
   return yield* new AppError({ message: `The episode around #${messageId} is too long to load` });

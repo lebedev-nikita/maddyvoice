@@ -24,9 +24,24 @@ const Entry = Schema.Struct({
 export type NameEntry = typeof Entry.Type;
 type Alias = typeof Alias.Type;
 
-const normalize = (text: string) =>
+export const isName = Schema.is(Name);
+
+/** The form in which names and aliases are compared: lower case, ё as е. */
+export const normalize = (text: string) =>
   text.normalize("NFKC").toLocaleLowerCase("ru-RU").replaceAll("ё", "е");
 const aliasText = (alias: Alias) => (typeof alias === "string" ? alias : alias.text);
+
+/** Every name and alias of the dictionary by its normalized form, in its first spelling. */
+export function dictionarySpellings(names: readonly NameEntry[]) {
+  const spellings = new Map<string, string>();
+  for (const entry of names)
+    for (const text of [entry.name, ...(entry.aliases ?? []).map(aliasText)])
+      if (!spellings.has(normalize(text))) spellings.set(normalize(text), text);
+  return spellings;
+}
+
+export const dictionaryKeys = (names: readonly NameEntry[]) =>
+  new Set(dictionarySpellings(names).keys());
 
 /**
  * The names dictionary in priority order. Every name and alias appears once (an alias may
@@ -158,21 +173,37 @@ const rules = (names: readonly NameEntry[]) =>
 // as VJLink. Aliases correct what the hints miss.
 const maxKeywords = 100;
 
+/** Whether a text mentions the name as a whole word, in any case and with a Russian ending. */
+export const mentions = (name: string, text: string) => aliasRule(name, name).pattern.test(text);
+
 /**
  * Keywords for the recogniser: names mentioned in the posts around the recording first, in
- * any case or spelling the dictionary knows, then the rest in dictionary order. A hint lower
- * in a long list is often ignored.
+ * any case or spelling the dictionary knows, then the rest in dictionary order, then
+ * `additions` (names found in posts but not yet in the dictionary) in their order. A hint
+ * lower in a long list is often ignored.
  */
-export function keywordsFor(names: readonly NameEntry[], nearby: readonly string[]) {
+export function keywordsFor(
+  names: readonly NameEntry[],
+  nearby: readonly string[],
+  additions: readonly string[] = [],
+) {
   const text = nearby.join("\n");
+  const known = dictionaryKeys(names);
+  const all = [...names];
+  for (const name of additions) {
+    const key = normalize(name);
+    if (known.has(key)) continue;
+    known.add(key);
+    all.push({ name });
+  }
   const mentioned = new Set(
-    names.filter((entry) =>
+    all.filter((entry) =>
       [entry.name, ...(entry.aliases ?? []).filter((alias) => typeof alias === "string")].some(
         (alias) => aliasRule(alias, entry.name).pattern.test(text),
       ),
     ),
   );
-  return [...mentioned, ...names.filter((entry) => !mentioned.has(entry))]
+  return [...mentioned, ...all.filter((entry) => !mentioned.has(entry))]
     .map((entry) => entry.name)
     .slice(0, maxKeywords);
 }

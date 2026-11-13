@@ -234,6 +234,23 @@ recordings already queued publish one by one, newer ones as episodes; the topic
 service was needed until no single recording waited for its title. Transcripts
 are kept in the publisher's BoxDB and backed up with it.
 
+Names that the publisher finds in Maddyson's posts are kept in its BoxDB as
+[additions to the dictionary](../README.md#names-from-posts). To move them into
+`assets/names.json`, export them on the Mac in a checkout of `main` and merge them:
+
+```sh
+ssh pi sudo -u maddyvoice /opt/maddyvoice/deploy/maddyvoice names export > data/name-additions.json
+bun run cli names merge data/name-additions.json
+```
+
+The export can run while the publisher works. After the reviewed file is
+deployed, the publisher marks the moved names and rejects the names removed from
+the file. Reject an addition that should not reach the file on the Pi:
+
+```sh
+sudo -u maddyvoice /opt/maddyvoice/deploy/maddyvoice names reject 'Name'
+```
+
 ## Topic service
 
 The topic service is switched off: episodes are titled by the publisher itself.

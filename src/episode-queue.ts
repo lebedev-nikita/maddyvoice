@@ -5,6 +5,7 @@ import { episodeGapMs } from "./episode.ts";
 import { episodeAround } from "./episode-preview.ts";
 import { chapterLines, EpisodeTitler } from "./episode-title.ts";
 import { Media } from "./media.ts";
+import { NameAdditions } from "./name-additions.ts";
 import { Telegram } from "./telegram.ts";
 import { ThumbnailQuotes } from "./thumbnail-quote.ts";
 import { Transcriber } from "./transcription.ts";
@@ -155,7 +156,8 @@ export const renderEpisodeVideo = Effect.fn("renderEpisodeVideo")(function* (hea
 /**
  * Transcribe the episode and generate its title, chapters, thumbnail quote and tags once;
  * later calls read them back. Rendering must come first: chapters start where the
- * recordings do.
+ * recordings do. Names in the author's posts around the episode are added to the names
+ * dictionary first, so the recogniser is hinted with them.
  */
 export const episodeMetadata = Effect.fn("episodeMetadata")(function* (head: Job) {
   const saved = yield* readEpisode(head);
@@ -170,7 +172,8 @@ export const episodeMetadata = Effect.fn("episodeMetadata")(function* (head: Job
     const telegram = yield* Telegram;
     const transcriber = yield* Transcriber;
     const titler = yield* EpisodeTitler;
-    const { nearby } = yield* episodeAround(Number(head.message_id));
+    const { notes, nearby } = yield* episodeAround(Number(head.message_id));
+    yield* (yield* NameAdditions).learn(notes);
     const transcripts = yield* Effect.forEach(members, (job) =>
       telegram
         .post(Number(job.message_id))

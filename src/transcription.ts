@@ -5,6 +5,7 @@ import OpenAI, { toFile } from "openai";
 import { AppError, attempt, Paths, safeMessage, Settings } from "./core.ts";
 import { Store } from "./database.ts";
 import { downloadMedia } from "./media.ts";
+import { NameAdditions } from "./name-additions.ts";
 import { autocorrect, findTriggers, keywordsFor, NameChecker, readNames } from "./names.ts";
 import type { Post } from "./telegram.ts";
 
@@ -112,7 +113,7 @@ export class TranscriptStore extends Context.Service<
 }
 
 // Transcribes voices through the OpenAI API with a key restricted to /v1/audio, hinting the
-// names from assets/names.json. Each transcript is paid for once and kept in the
+// names from assets/names.json and the worker's additions to it. Each transcript is paid for once and kept in the
 // TranscriptStore. The kept text is what the recogniser heard; names are corrected on every
 // read, so a new alias also fixes transcripts made before it.
 export class Transcriber extends Context.Service<
@@ -132,6 +133,7 @@ export class Transcriber extends Context.Service<
       const config = yield* Settings;
       const checker = yield* NameChecker;
       const store = yield* TranscriptStore;
+      const additions = yield* NameAdditions;
       // Commands that never transcribe run without the key.
       const apiKey = yield* Config.Redacted("OPENAI_TRANSCRIPTION_API_KEY").pipe(Config.option);
       const model = yield* Config.String("TRANSCRIPTION_MODEL").pipe(
@@ -202,7 +204,8 @@ export class Transcriber extends Context.Service<
       ) {
         const id = `${config.channel}-${post.id}-${audioIndex}`;
         const names = yield* readNames(Paths.names);
-        const heard = yield* recognise(id, post, audioIndex, keywordsFor(names, nearby));
+        const added = (yield* additions.list()).map((addition) => addition.name);
+        const heard = yield* recognise(id, post, audioIndex, keywordsFor(names, nearby, added));
         const triggers = findTriggers(heard, names);
         const known = yield* store.verdicts(id, model);
         const unknown = triggers.filter((trigger) => !(trigger.key in known));

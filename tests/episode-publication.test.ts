@@ -83,7 +83,7 @@ async function fixture(feed: Post[]) {
   await mkdir(join(dataDir, "thumbnails"));
   const info = await fingerprint(video);
   const client = new Client();
-  const calls: EpisodeCalls = { transcripts: [], titles: 0, nearby: [] };
+  const calls: EpisodeCalls = { transcripts: [], titles: 0, nearby: [], learned: [] };
   const renders: { recordings: number[]; scene: number }[] = [];
   const singles: string[] = [];
   const thumbnails: ThumbnailRecording[] = [];
@@ -201,6 +201,8 @@ it("publishes recordings after the cutover as one episode once six hours of sile
   expect(f.calls.transcripts).toEqual(["11-0", "13-0", "14-0"]);
   // Names in the author's posts around the episode are hinted to the recogniser.
   expect(f.calls.nearby[0]).toEqual(["Пишу про Озона"]);
+  // Their names are added to the dictionary before the voices are transcribed.
+  expect(f.calls.learned).toEqual([[12]]);
   expect(f.client.starts.map((start) => start.id)).toEqual(["maddysontg-11-0"]);
   const episode = f.client.starts[0]!.episode!;
   expect(episode.title).toBe("Мэддисон о голосовании за участников");
