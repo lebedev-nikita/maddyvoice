@@ -73,8 +73,9 @@ Each voice is transcribed once through the OpenAI API
 `TRANSCRIPTION_MODEL` defaults to `gpt-transcribe`). The worker keeps transcripts
 in the `transcripts` table; they are paid for and are not discarded. The
 recogniser is hinted with 100 names: first those that Maddyson's text posts
-around the episode mention, then the most important of the rest. The API would
-take about 900, but a longer list weakened the hints in a test. Titles, chapters,
+around the episode mention, then the most important of the rest, then the
+[additions](#names-from-posts) by how often and how recently they were mentioned.
+The API would take about 900, but a longer list weakened the hints in a test. Titles, chapters,
 quotes, tags and name verdicts come from the model proxy (`OPENAI_BASE_URL`,
 `OPENAI_API_KEY`, `TOPIC_MODEL`, `TOPIC_REVIEW_MODEL`), which the worker calls
 directly.
@@ -104,6 +105,33 @@ is heard, a model decides from the surrounding text whether it stands for the
 name, and the verdict is kept with the transcript. Saved transcripts keep what
 was heard; names are corrected each time a transcript is
 read, so a new alias also fixes older transcripts.
+
+### Names from posts
+
+Before transcribing an episode, the worker reads Maddyson's text posts around it
+that it has not read yet and adds their names to the dictionary without asking:
+a model call through the proxy per 20 posts lists the names the recogniser may
+not know, and a name is kept only if its post does mention it, in any Russian
+case. Names already in the file, as a name or an alias in any case, are skipped.
+Additions stay in the worker's BoxDB (`name_additions`) with their spelling,
+first post, number of posts and the time last seen, and are hinted from the
+same episode on.
+
+To move the additions into the file, print them where the worker's database is
+and merge the output into `assets/names.json` in a checkout:
+
+```sh
+bun run cli names export > data/name-additions.json
+bun run cli names merge data/name-additions.json
+```
+
+`merge` appends the new names after the file's own; review them, reorder or give
+them aliases, and commit. Once the deployed file holds a name, the worker marks
+its addition as moved. A name or alias that leaves the deployed file is rejected
+and never added again, as are the spellings in
+[assets/names-rejected.json](assets/names-rejected.json), which were removed
+before the worker tracked removals. `bun run cli names reject <name>…` rejects
+additions that should never reach the file.
 
 ## Connect a new YouTube channel
 

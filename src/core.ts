@@ -28,6 +28,7 @@ export const Paths = {
   topicSchema: fileURLToPath(new URL("../assets/topic.schema.json", import.meta.url)),
   people: fileURLToPath(new URL("../assets/people.json", import.meta.url)),
   names: fileURLToPath(new URL("../assets/names.json", import.meta.url)),
+  rejectedNames: fileURLToPath(new URL("../assets/names-rejected.json", import.meta.url)),
 };
 
 export class Settings extends Context.Service<

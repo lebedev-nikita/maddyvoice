@@ -43,6 +43,27 @@ tables:
       chapter?: TEXT
     constraints:
       - unique: [channel, message_id, audio_index]
+  name_additions:
+    columns:
+      key: TEXT PRIMARY KEY
+      name: TEXT
+      status: ENUM('added', 'moved', 'rejected') DEFAULT 'added'
+      first_post?: INTEGER
+      posts: INTEGER DEFAULT 0
+      last_seen?: TEXT
+      created_at: TEXT
+      updated_at: TEXT
+  name_dictionary:
+    columns:
+      key: TEXT PRIMARY KEY
+      name: TEXT
+  name_posts:
+    columns:
+      channel: TEXT
+      message_id: INTEGER
+      scanned_at: TEXT
+    constraints:
+      - primary_key: [channel, message_id]
   name_verdicts:
     columns:
       job_id: TEXT REFERENCES jobs(id)
@@ -128,3 +149,6 @@ migrations:
   - version: "20261114000000"
     name: episodes
     checksum: afeb60d52b91ba574b2da0c841ccef8b77314a1a5ab321716b0c80bcb1fd0896
+  - version: "20261114000001"
+    name: name_additions
+    checksum: 6a29b4820708b1292e1632b5412cc2e7c0f532302c1bd6f0ae6d4ce99467ce65

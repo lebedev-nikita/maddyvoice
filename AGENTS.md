@@ -40,7 +40,9 @@ Episodes are transcribed, titled and described by the worker itself, and
 `preview-episode` does the same locally. Both call `ModelProxy` directly
 (`OPENAI_BASE_URL`, `OPENAI_API_KEY`) for the title, chapters, thumbnail quote,
 tags and the verdicts on common words that may be names, so every episode spends
-the proxy's limits. Voices are transcribed through the OpenAI API itself
+the proxy's limits. The worker also extracts names from the author's unread text
+posts around each episode through it (`NameAdditions` in `src/name-additions.ts`);
+the preview does not. Voices are transcribed through the OpenAI API itself
 (`Transcriber` in `src/transcription.ts`, `OPENAI_TRANSCRIPTION_API_KEY`). That
 key is restricted to `/v1/audio` and is never sent to the proxy. Each new voice
 costs money once: the worker keeps its transcript in BoxDB, the preview in

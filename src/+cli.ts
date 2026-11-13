@@ -9,6 +9,7 @@ import { previewEpisode } from "./episode-preview.ts";
 import { EpisodeTitler } from "./episode-title.ts";
 import { Media } from "./media.ts";
 import { ModelProxy } from "./model.ts";
+import { mergeAdditionsFile, NameAdditions } from "./name-additions.ts";
 import { NameChecker } from "./names.ts";
 import { manageService } from "./service.ts";
 import { Telegram } from "./telegram.ts";
@@ -30,14 +31,15 @@ import { ThumbnailQuotes } from "./thumbnail-quote.ts";
 import { Transcriber, TranscriptStore } from "./transcription.ts";
 import { VideoTagGenerator } from "./video-tags.ts";
 
-// Episodes are transcribed, titled and described by the worker itself: transcripts stay in
-// its BoxDB, and model calls go to the proxy (OPENAI_BASE_URL, OPENAI_API_KEY).
+// Episodes are transcribed, titled and described by the worker itself: transcripts and
+// names found in posts stay in its BoxDB, and model calls go to the proxy (OPENAI_BASE_URL,
+// OPENAI_API_KEY).
 const episodeMetadataServices = Layer.mergeAll(
   Transcriber.layer.pipe(Layer.provide(NameChecker.layer), Layer.provide(TranscriptStore.database)),
   EpisodeTitler.layer,
   ThumbnailQuotes.layer,
   VideoTagGenerator.layer,
-).pipe(Layer.provide(ModelProxy.layer));
+).pipe(Layer.provideMerge(NameAdditions.database), Layer.provide(ModelProxy.layer));
 const services = Layer.mergeAll(
   Telegram.layer,
   Media.layer,
@@ -180,11 +182,15 @@ const preview = Command.make(
 
 // An episode preview reads no queue and publishes nothing; it needs the transcription key
 // and the model proxy, which decides whether common words are names and writes the title,
-// instead of the database and YouTube.
+// instead of the database and YouTube. It hints only the names in assets/names.json.
 const episodeServices = Layer.mergeAll(
   Telegram.layer,
   Media.layer,
-  Transcriber.layer.pipe(Layer.provide(NameChecker.layer), Layer.provide(TranscriptStore.files)),
+  Transcriber.layer.pipe(
+    Layer.provide(NameChecker.layer),
+    Layer.provide(TranscriptStore.files),
+    Layer.provide(NameAdditions.none),
+  ),
   EpisodeTitler.layer,
 ).pipe(
   Layer.provide(ModelProxy.layer),
@@ -199,6 +205,40 @@ const episodePreview = Command.make(
   Command.withDescription(
     "Render the episode containing a voice to a local MP4 and print its title, chapters and transcripts",
   ),
+);
+
+const namesExport = Command.make("export", {}, () =>
+  app(
+    NameAdditions.use((additions) => additions.list()).pipe(
+      Effect.map(json),
+      Effect.flatMap(Console.log),
+    ),
+  ),
+).pipe(
+  Command.withDescription(
+    "Print the names found in posts and not yet in assets/names.json, most mentioned first",
+  ),
+);
+
+const namesMerge = Command.make("merge", { file: Argument.String("export-file") }, ({ file }) =>
+  mergeAdditionsFile(file).pipe(
+    Effect.flatMap((added) => Console.log(`Added ${added.length} name(s) to assets/names.json`)),
+  ),
+).pipe(
+  Command.withDescription(
+    "Append the names of a `names export` file to assets/names.json, skipping known and rejected ones",
+  ),
+);
+
+const namesReject = Command.make(
+  "reject",
+  { names: Argument.String("name").pipe(Argument.atLeast(1)) },
+  ({ names }) => app(NameAdditions.use((additions) => additions.reject(names))),
+).pipe(Command.withDescription("Drop names from the additions and never add them again"));
+
+const names = Command.make("names").pipe(
+  Command.withDescription("Names that Maddyson's text posts add to the names dictionary"),
+  Command.withSubcommands([namesExport, namesMerge, namesReject]),
 );
 
 const status = Command.make("status", {}, () =>
@@ -336,6 +376,7 @@ root.pipe(
     preview,
     episodePreview,
     status,
+    names,
     auth,
     resolve,
     retry,
