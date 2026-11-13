@@ -7,6 +7,7 @@ import {
   autocorrect,
   decodeNames,
   findTriggers,
+  keywordsFor,
   NameChecker,
   triggerPrompt,
 } from "../src/names.ts";
@@ -101,6 +102,23 @@ describe("names dictionary", () => {
 
   it("matches whole words and never rewrites a correction", () => {
     expect(autocorrect("Сосавотик и Человек паук 2", names)).toBe("Сосавотик и Человек-паук 2");
+  });
+
+  it("hints the names of nearby posts first, in any form the dictionary knows", () => {
+    expect(keywordsFor(names, ["Сегодня Виджелинку и Сосавоту не до этого", "Озона нет"])).toEqual([
+      "Сасавот",
+      "VJLink",
+      "Озон",
+      "Галя",
+      "Анар Абдулаев",
+      "BadComedian",
+      "Твич",
+      "Давг",
+      "Кологривый",
+      "Факер",
+      "Человек-паук 2",
+      "Человек-паук",
+    ]);
   });
 
   it("refuses duplicate names and characters the API rejects", () => {

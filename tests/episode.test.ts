@@ -87,8 +87,10 @@ describe("episode lookup", () => {
     Effect.runPromise(episodeAround(id).pipe(Effect.provide(telegram(posts))));
 
   it("reads the feed in both directions until the episode is bounded by silence", async () => {
-    const { episode, complete } = await around(7);
+    const { episode, nearby, complete } = await around(7);
     expect(ids(episode)).toEqual([5, 7, 9]);
+    // Text posts from three hours before the first voice to three hours after the last.
+    expect(nearby).toHaveLength(5);
     expect(complete).toBe(true);
   });
 

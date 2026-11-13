@@ -61,18 +61,28 @@ Voices without photos share one scene, chosen by the video's number so that
 consecutive videos differ; the preview uses the first voice's id as that
 number. Text posts between the voices are not shown.
 
-The command prints the start of every voice in seconds, for chapters, and its
-transcript; `complete` is `false` while later voices may still join the
-episode. Each voice is transcribed once through the OpenAI API
+The command prints the episode's title and YouTube chapters, the start of every
+voice in seconds and its transcript; `complete` is `false` while later voices may
+still join the episode. The title names the main topic of the episode, follows
+the same style rules as single-voice titles and passes the same independent
+review against the speech; chapters group neighbouring voices on one subject and
+are printed only when YouTube would show them (three or more, each at least ten
+seconds long). Title and chapters come from the model proxy (`TOPIC_MODEL`,
+`TOPIC_REVIEW_MODEL`).
+
+Each voice is transcribed once through the OpenAI API
 (`OPENAI_TRANSCRIPTION_API_KEY`, a key restricted to `/v1/audio`;
-`TRANSCRIPTION_MODEL` defaults to `gpt-4o-transcribe`) and saved under
-`data/transcripts/`, for titles that will no longer wait for YouTube captions.
+`TRANSCRIPTION_MODEL` defaults to `gpt-transcribe`) and saved under
+`data/transcripts/<model>/`, for titles that will no longer wait for YouTube
+captions. The recogniser is hinted with 100 names: first those that Maddyson's
+text posts around the episode mention, then the most important of the rest. The
+API would take about 900, but a longer list weakened the hints in a test.
 The preview reads no queue and uploads nothing.
 
 [assets/names.json](assets/names.json) lists the names of people, channels,
 games and services that Maddyson writes about, most important first. It was
-compiled from his own text posts and the comments under them, and is meant to be
-passed to the recogniser as keywords (at most 900). Its aliases fix what the
+compiled from his own text posts and the comments under them, and its names are
+passed to the recogniser as keywords. Its aliases fix what the
 recogniser still gets wrong: a misheard spelling is replaced by the name with the
 same Russian ending (`Виджелинку` → `VJLink`, `Сосавоту` → `Сасавоту`). An alias
 that is also a common word (`давка`, `насрал`) carries a `meaning`; each time it

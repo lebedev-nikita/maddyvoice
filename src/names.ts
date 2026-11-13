@@ -149,6 +149,30 @@ const rules = (names: readonly NameEntry[]) =>
     .flatMap((entry) => (entry.aliases ?? []).map((alias) => aliasRule(alias, entry.name)))
     .sort((a, b) => b.length - a.length);
 
+// The API takes up to about 900 keywords, but a long list dilutes the hints: with the whole
+// dictionary VJLink was heard as Виджелинк again, with a hundred names or fewer more often
+// as VJLink. Aliases correct what the hints miss.
+const maxKeywords = 100;
+
+/**
+ * Keywords for the recogniser: names mentioned in the posts around the recording first, in
+ * any case or spelling the dictionary knows, then the rest in dictionary order. A hint lower
+ * in a long list is often ignored.
+ */
+export function keywordsFor(names: readonly NameEntry[], nearby: readonly string[]) {
+  const text = nearby.join("\n");
+  const mentioned = new Set(
+    names.filter((entry) =>
+      [entry.name, ...(entry.aliases ?? []).filter((alias) => typeof alias === "string")].some(
+        (alias) => aliasRule(alias, entry.name).pattern.test(text),
+      ),
+    ),
+  );
+  return [...mentioned, ...names.filter((entry) => !mentioned.has(entry))]
+    .map((entry) => entry.name)
+    .slice(0, maxKeywords);
+}
+
 /** A common word heard where it may stand for a name; `key` is stable for the same text. */
 export type Trigger = {
   readonly key: string;

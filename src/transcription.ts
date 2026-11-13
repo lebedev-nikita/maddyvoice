@@ -4,7 +4,7 @@ import { Config, Context, Effect, Layer, Redacted, Schema } from "effect";
 import OpenAI, { toFile } from "openai";
 import { AppError, attempt, Paths, safeMessage, Settings } from "./core.ts";
 import { downloadMedia } from "./media.ts";
-import { autocorrect, findTriggers, NameChecker, readNames } from "./names.ts";
+import { autocorrect, findTriggers, keywordsFor, NameChecker, readNames } from "./names.ts";
 import type { Post } from "./telegram.ts";
 
 // The transcription endpoint accepts files up to 25 MB.
@@ -24,14 +24,19 @@ function apiError(cause: unknown) {
   return new AppError({ message: `Transcription request failed: ${safeMessage(cause)}` });
 }
 
-// Transcribes voices through the OpenAI API with a key restricted to /v1/audio. Each
-// transcript is paid for once and then read from DATA_DIR/transcripts. The saved text is
-// what the recogniser heard; names are corrected on every read, so a new alias in
-// assets/names.json also fixes transcripts made before it.
+// Transcribes voices through the OpenAI API with a key restricted to /v1/audio, hinting the
+// names from assets/names.json. Each transcript is paid for once and then read from
+// DATA_DIR/transcripts/<model>. The saved text is what the recogniser heard; names are
+// corrected on every read, so a new alias also fixes transcripts made before it.
 export class Transcriber extends Context.Service<
   Transcriber,
   {
-    transcribe(post: Post, audioIndex: number): Effect.Effect<string, AppError>;
+    /** `nearby` are the author's posts around the recording; their names are hinted first. */
+    transcribe(
+      post: Post,
+      audioIndex: number,
+      nearby?: readonly string[],
+    ): Effect.Effect<string, AppError>;
   }
 >()("maddyvoice/Transcriber") {
   static readonly layer = Layer.effect(
@@ -41,7 +46,7 @@ export class Transcriber extends Context.Service<
       const checker = yield* NameChecker;
       const apiKey = yield* Config.Redacted("OPENAI_TRANSCRIPTION_API_KEY");
       const model = yield* Config.String("TRANSCRIPTION_MODEL").pipe(
-        Config.withDefault("gpt-4o-transcribe"),
+        Config.withDefault("gpt-transcribe"),
       );
       // The SDK would otherwise pick up OPENAI_BASE_URL, which points at the model proxy.
       const client = new OpenAI({
@@ -49,10 +54,13 @@ export class Transcriber extends Context.Service<
         apiKey: Redacted.value(apiKey),
         maxRetries: 2,
       });
-      const directory = join(config.dataDir, "transcripts");
+      // Only gpt-transcribe takes keyword hints; other models reject the field.
+      const hints = model.startsWith("gpt-transcribe");
+      const directory = join(config.dataDir, "transcripts", model);
       const recognise = Effect.fn("Transcriber.recognise")(function* (
         post: Post,
         audioIndex: number,
+        keywords: readonly string[],
       ) {
         const audioUrl = post.audio[audioIndex];
         if (!audioUrl)
@@ -79,6 +87,7 @@ export class Transcriber extends Context.Service<
                 file: await toFile(await readFile(audio), "voice.ogg", { type: "audio/ogg" }),
                 model,
                 language: "ru",
+                ...(hints ? { keywords: [...keywords] } : {}),
                 response_format: "json",
               },
               { signal },
@@ -97,9 +106,10 @@ export class Transcriber extends Context.Service<
       const transcribe = Effect.fn("Transcriber.transcribe")(function* (
         post: Post,
         audioIndex: number,
+        nearby: readonly string[] = [],
       ) {
-        const heard = yield* recognise(post, audioIndex);
         const names = yield* readNames(Paths.names);
+        const heard = yield* recognise(post, audioIndex, keywordsFor(names, nearby));
         const triggers = findTriggers(heard, names);
         const saved = join(directory, `${config.channel}-${post.id}-${audioIndex}.names.json`);
         const known = yield* Effect.promise(() =>

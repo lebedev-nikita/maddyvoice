@@ -33,4 +33,5 @@ spends the proxy's Codex usage limits.
 key is restricted to `/v1/audio` and is never sent to the proxy; each new voice
 costs money once, then its transcript is read from `DATA_DIR/transcripts`. It also
 asks `ModelProxy` whether common words listed in `assets/names.json` stand for
-names, once per occurrence (`DATA_DIR/transcripts/*.names.json`).
+names, once per occurrence (`DATA_DIR/transcripts/<model>/*.names.json`), and
+writes and reviews the episode's title and chapters through it.

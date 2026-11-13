@@ -1,6 +1,7 @@
 import { DateTime, Effect } from "effect";
 import { AppError, json } from "./core.ts";
 import { episodeGapMs, groupEpisodes } from "./episode.ts";
+import { chapterLines, EpisodeTitler } from "./episode-title.ts";
 import { Media } from "./media.ts";
 import { Telegram, type Post } from "./telegram.ts";
 import { Transcriber } from "./transcription.ts";
@@ -20,6 +21,7 @@ function episodeOf(posts: Iterable<Post>, messageId: number) {
       last: time(episode.at(-1)!.post),
       oldest: feed[0]!,
       latest: feed.at(-1)!,
+      feed,
     }
   );
 }
@@ -27,6 +29,7 @@ function episodeOf(posts: Iterable<Post>, messageId: number) {
 /**
  * The episode containing a voice. Reads the feed outwards from the voice until a full gap
  * without voices lies on both sides; `complete` is false while later voices may still join.
+ * `nearby` are the author's text posts within half a gap of the episode's voices.
  */
 export const episodeAround = Effect.fn("episodeAround")(function* (messageId: number) {
   const telegram = yield* Telegram;
@@ -61,14 +64,24 @@ export const episodeAround = Effect.fn("episodeAround")(function* (messageId: nu
       return yield* new AppError({
         message: `Telegram post #${messageId} is not an original voice message`,
       });
-    const { episode, first, last, oldest, latest } = found;
+    const { episode, first, last, oldest, latest, feed } = found;
     if (!start && time(oldest) > first - episodeGapMs) yield* load(oldest.id);
     else if (latest.id < newest && time(latest) < last + episodeGapMs) {
       ahead = Math.min(Math.max(ahead, latest.id) + 21, newest + 1);
       yield* loadDownTo(ahead, latest.id);
     } else {
       const now = DateTime.toEpochMillis(yield* DateTime.now);
-      return { episode, complete: latest.id < newest || now - last >= episodeGapMs };
+      const nearby = feed
+        .filter(
+          (post) =>
+            !post.forwarded &&
+            post.audio.length === 0 &&
+            post.text.trim() &&
+            time(post) >= first - episodeGapMs / 2 &&
+            time(post) < last + episodeGapMs / 2,
+        )
+        .map((post) => post.text);
+      return { episode, nearby, complete: latest.id < newest || now - last >= episodeGapMs };
     }
   }
   return yield* new AppError({ message: `The episode around #${messageId} is too long to load` });
@@ -77,14 +90,20 @@ export const episodeAround = Effect.fn("episodeAround")(function* (messageId: nu
 export const previewEpisode = Effect.fn("previewEpisode")(function* (messageId: number) {
   const media = yield* Media;
   const transcriber = yield* Transcriber;
-  const { episode, complete } = yield* episodeAround(messageId);
+  const titler = yield* EpisodeTitler;
+  const { episode, nearby, complete } = yield* episodeAround(messageId);
   const transcripts = yield* Effect.forEach(episode, (recording) =>
-    transcriber.transcribe(recording.post, recording.audioIndex),
+    transcriber.transcribe(recording.post, recording.audioIndex, nearby),
   );
   const first = episode[0]!.post;
   // Published episodes will take the scene from their own number; until then the first
   // voice stands in for it.
   const result = yield* media.renderEpisode(episode, first.id, `preview-episode-${first.id}`);
+  const voices = transcripts.map((transcript, index) => ({
+    start: result.starts[index]!,
+    transcript,
+  }));
+  const { title, chapters } = yield* titler.title(voices);
   console.log(
     json({
       path: result.path,
@@ -92,6 +111,8 @@ export const previewEpisode = Effect.fn("previewEpisode")(function* (messageId: 
       size: result.size,
       duration: result.duration,
       complete,
+      title,
+      chapters: chapterLines(chapters, result.duration),
       voices: episode.map((recording, index) => ({
         source: recording.post.url,
         publishedAt: recording.post.date,
