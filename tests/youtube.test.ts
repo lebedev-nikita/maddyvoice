@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Job } from "../src/database.ts";
 import { UploadReview, videoMetadata, YouTubeClient } from "../src/youtube.ts";
-import { captionText, topicTitle } from "../src/topic.ts";
+import { captionText, spokenTitle, topicTitle } from "../src/topic.ts";
 
 const auth = {
   clientId: "test",
@@ -338,6 +338,34 @@ describe("captions and title updates", () => {
     expect(topicTitle("  новая тема\nпро игру  ")).toBe("Мэддисон новая тема про игру");
     expect(topicTitle("😀".repeat(100)).startsWith("Мэддисон ")).toBe(true);
     expect(Array.from(topicTitle("😀".repeat(100))).length).toBe(100);
+  });
+
+  it("names GTA 6 when a title names no other part", () => {
+    for (const [topic, title] of [
+      ["Критикует геймплей GTA", "критикует геймплей GTA 6"],
+      ["GTA: первые впечатления", "GTA 6: первые впечатления"],
+      ["Оценивает ГТА после прохождения", "оценивает ГТА 6 после прохождения"],
+      ["Сравнивает GTA с Cyberpunk и GTA", "сравнивает GTA 6 с Cyberpunk и GTA 6"],
+    ] as const)
+      expect(topicTitle(topic)).toBe(`Мэддисон ${title}`);
+    for (const topic of [
+      "об онлайне на стриме GTA 6",
+      "вспоминает GTA 5 и GTA V",
+      "хвалит GTA San Andreas",
+      "о GTA: Vice City",
+      "о GTA Online",
+      "о серверах GTA RP",
+      "вспоминает пятую GTA",
+      "сравнивает части GTA",
+      "о старой GTA",
+      "о GTA IV",
+      "о GTA5",
+      "о ГТА Сан-Андреас",
+      "о GTA-сообществе",
+      "о GTAшке",
+    ])
+      expect(topicTitle(topic)).toBe(`Мэддисон ${topic}`);
+    expect(spokenTitle("Критикует геймплей GTA")).toBe("Мэддисон критикует геймплей GTA");
   });
 
   it("reformats an in-progress legacy upload after its original metadata was committed", async () => {

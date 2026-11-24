@@ -1,6 +1,6 @@
 import { Config, Context, Effect, Layer, Schema } from "effect";
 import { AppError, attempt, safeMessage } from "./core.ts";
-import { topicTitle, validateTopic } from "./topic.ts";
+import { spokenTitle, validateTopic } from "./topic.ts";
 import { isolatedModel, topicModel } from "./model.ts";
 import { reviewPrompt, TopicReview, validateReview } from "./topic-review.ts";
 import { titleStyle } from "./title-style.ts";
@@ -355,7 +355,7 @@ export class CommentTopics extends Context.Service<
         transcript: string,
         topic: string,
       ) {
-        const value = yield* run(reviewPrompt(transcript, topicTitle(topic)), TopicReview, {
+        const value = yield* run(reviewPrompt(transcript, spokenTitle(topic)), TopicReview, {
           model: reviewModel,
           reasoningEffort: "medium",
         });
