@@ -3,7 +3,7 @@ import { AppError, attempt } from "./core.ts";
 import { isolatedModel } from "./model.ts";
 import { titleStyle } from "./title-style.ts";
 import { reviewedTopic, reviewPrompt, TopicReview, validateReview } from "./topic-review.ts";
-import { topicTitle, validateTopic } from "./topic.ts";
+import { spokenTitle, topicTitle, validateTopic } from "./topic.ts";
 
 const Draft = Schema.Struct({
   topic: Schema.String,
@@ -130,7 +130,7 @@ export class EpisodeTitler extends Context.Service<
           );
         // The same independent review as for single voices checks the title against the speech.
         const verify = (speech: string, topic: string) =>
-          run(reviewPrompt(speech, topicTitle(topic)), TopicReview, {
+          run(reviewPrompt(speech, spokenTitle(topic)), TopicReview, {
             model: reviewModel,
             reasoningEffort: "medium",
           }).pipe(
