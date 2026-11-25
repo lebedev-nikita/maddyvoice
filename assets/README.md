@@ -13,7 +13,7 @@ changes the rotation for newly rendered videos and thumbnails. The right side
 stays clear for the post card.
 
 `channel-logo.png`: the YouTube channel avatar, the left 1080 × 1080 square of
-`backgrounds/miami-beach.jpg`. Thumbnails show the Telegram channel's photo instead.
+`backgrounds/miami-beach.jpg`. Thumbnails show the Telegram channel's title and photo instead.
 
 `channel-banner.jpg`: the 2560 × 1440 YouTube channel banner, the same scene with a
 voice card. YouTube shows only its central strip on computers and phones, so the
