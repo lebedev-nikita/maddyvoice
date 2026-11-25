@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseChannelPhoto, parsePage } from "../src/telegram.ts";
+import { parseChannelProfile, parsePage } from "../src/telegram.ts";
 
 const message = (
   content: string,
@@ -84,12 +84,21 @@ describe("public Telegram feed", () => {
 });
 
 describe("public Telegram channel page", () => {
-  it("reads the channel photo and refuses a page without one", () => {
+  it("reads the channel title and photo and refuses a page without them", () => {
     const html = `<div class="tgme_page_photo"><a href="https://t.me/maddysontg">
-      <img class="tgme_page_photo_image" src="https://cdn4.telesco.pe/file/photo.jpg"></a></div>`;
-    expect(parseChannelPhoto(html)).toBe("https://cdn4.telesco.pe/file/photo.jpg");
-    expect(() => parseChannelPhoto("<html>temporarily unavailable</html>")).toThrow(
-      "No channel photo",
+      <img class="tgme_page_photo_image" src="https://cdn4.telesco.pe/file/photo.jpg"></a></div>
+      <div class="tgme_page_title" dir="auto">
+        <span dir="auto">&quot;Maddyson&quot; развлекательный телеграм канал&#33;</span>
+      </div>`;
+    expect(parseChannelProfile(html)).toEqual({
+      title: '"Maddyson" развлекательный телеграм канал!',
+      photo: "https://cdn4.telesco.pe/file/photo.jpg",
+    });
+    expect(() => parseChannelProfile("<html>temporarily unavailable</html>")).toThrow(
+      "No channel title",
     );
+    expect(() =>
+      parseChannelProfile(html.replace("tgme_page_photo_image", "tgme_page_photo_missing")),
+    ).toThrow("No channel photo");
   });
 });

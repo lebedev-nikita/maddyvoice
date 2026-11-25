@@ -7,7 +7,7 @@ import { escapeHtml, openPage } from "./browser.ts";
 import { AppError, attempt, Paths, Settings } from "./core.ts";
 import { listBackgrounds } from "./media.ts";
 import { imageData } from "./post-card.ts";
-import { channelPhoto } from "./telegram.ts";
+import { channelProfile } from "./telegram.ts";
 
 // YouTube rejects thumbnails with Russian obscenities. Each pattern captures the root;
 // the offset names the root letter replaced by a star.
@@ -94,13 +94,14 @@ function waveform(messageId: number) {
 type ThumbnailImages = {
   readonly background: string;
   readonly avatar: string;
+  readonly channelTitle: string;
   readonly oswald: string;
   readonly roboto: string;
 };
 
 /**
- * The video's scene with its Telegram card enlarged: the channel's Telegram photo, and the
- * quote in place of the post text.
+ * The video's scene with its Telegram card enlarged: the channel's Telegram title and photo,
+ * and the quote in place of the post text.
  */
 function thumbnailHtml(
   lines: readonly string[],
@@ -121,7 +122,8 @@ html, body { width: 1280px; height: 720px; overflow: hidden; -webkit-font-smooth
   box-shadow: 0 18px 60px rgba(0,0,0,.42), 0 2px 6px rgba(0,0,0,.18); }
 .author { display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
   font: 600 25px Roboto; color: #3a8bc8; }
-.author img { width: 46px; height: 46px; border-radius: 50%; }
+.author img { width: 46px; height: 46px; border-radius: 50%; flex: none; }
+.author span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .voice { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
 .play { width: 64px; height: 64px; border-radius: 50%; background: #40a7e3; flex: none;
   display: grid; place-items: center; }
@@ -132,7 +134,7 @@ html, body { width: 1280px; height: 720px; overflow: hidden; -webkit-font-smooth
 </style></head><body>
 <div class="scene"></div>
 <div class="bubble">
-  <div class="author"><img src="${images.avatar}">Мэддисон</div>
+  <div class="author"><img src="${images.avatar}"><span>${escapeHtml(images.channelTitle)}</span></div>
   <div class="voice"><div class="play"><svg width="27" height="27" viewBox="0 0 24 24"><path fill="#fff" d="M7 4.5v15l13-7.5z"/></svg></div>
     <div class="wave">${waveform(recording.messageId)}</div></div>
   <div class="quote">${lines.map(escapeHtml).join("<br>")}</div>
@@ -141,8 +143,12 @@ html, body { width: 1280px; height: 720px; overflow: hidden; -webkit-font-smooth
 </body></html>`;
 }
 
-// Shrinks the quote until every line fits the bubble and the bubble fits the frame.
+// Shrinks a long channel title down to 19 px, beyond which it ends in an ellipsis, then the
+// quote until every line fits the bubble and the bubble fits the frame.
 const fitScript = `(() => {
+  const title = document.querySelector(".author span");
+  for (let size = 25; size > 19 && title.scrollWidth > title.clientWidth; )
+    title.style.fontSize = --size + "px";
   const quote = document.querySelector(".quote"), bubble = document.querySelector(".bubble");
   let size = parseFloat(getComputedStyle(quote).fontSize);
   while (size > 32 && (quote.scrollWidth > quote.clientWidth || bubble.offsetHeight > 640))
@@ -164,11 +170,12 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
     return yield* new AppError({ message: "Thumbnail requires a short nonempty quote" });
   const backgrounds = yield* listBackgrounds;
   const { channel } = yield* Settings;
-  // Fetched for every render, so thumbnails follow the channel's current photo.
-  const avatar = yield* attempt("Download Telegram channel photo", async (signal) => {
-    const photo = await imageData([await channelPhoto(channel, signal)], signal);
-    if (!photo) throw new Error("Telegram served no image for the channel photo");
-    return photo;
+  // Fetched for every render, so thumbnails follow the channel's current title and photo.
+  const profile = yield* attempt("Download Telegram channel title and photo", async (signal) => {
+    const { title, photo } = await channelProfile(channel, signal);
+    const avatar = await imageData([photo], signal);
+    if (!avatar) throw new Error("Telegram served no image for the channel photo");
+    return { title, avatar };
   });
   const work = yield* Effect.acquireRelease(
     attempt("Create thumbnail workspace", () => mkdtemp(join(tmpdir(), "maddyvoice-thumbnail-"))),
@@ -179,7 +186,8 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
       backgrounds[(recording.scene ?? recording.messageId) % backgrounds.length]!,
       "image/jpeg",
     ),
-    avatar,
+    avatar: profile.avatar,
+    channelTitle: profile.title,
     oswald: await dataUri(Paths.thumbnailFont, "font/ttf"),
     roboto: await dataUri(Paths.cardFont, "font/ttf"),
   }));

@@ -128,21 +128,30 @@ export function parsePage(html: string, channel: string): Page {
   return { posts: posts.sort((a, b) => a.id - b.id), before };
 }
 
-/** The photo on a channel's public page, `https://t.me/<channel>`. */
-export function parseChannelPhoto(html: string): string {
-  const source = load(html)("img.tgme_page_photo_image").attr("src");
-  if (!source)
+/** The channel's current title and photo address; the page serves the photo at 320 × 320. */
+export type ChannelProfile = { readonly title: string; readonly photo: string };
+
+/** Title and photo on a channel's public page, `https://t.me/<channel>`. */
+export function parseChannelProfile(html: string): ChannelProfile {
+  const $ = load(html);
+  const title = $(".tgme_page_title").first().text().replace(/\s+/g, " ").trim();
+  const photo = $("img.tgme_page_photo_image").attr("src");
+  if (!title)
+    throw new Error("No channel title: the channel is unavailable or Telegram changed its markup");
+  if (!photo)
     throw new Error("No channel photo: the channel has none or Telegram changed its markup");
-  return source;
+  return { title, photo };
 }
 
-/** Address of the channel's current photo, which the page serves at 320 × 320. */
-export async function channelPhoto(channel: string, signal: AbortSignal): Promise<string> {
+export async function channelProfile(
+  channel: string,
+  signal: AbortSignal,
+): Promise<ChannelProfile> {
   const response = await checkedFetch(`https://t.me/${channel}`, {
     signal,
     headers: { "User-Agent": "maddyvoice/0.1" },
   });
-  return parseChannelPhoto(await response.text());
+  return parseChannelProfile(await response.text());
 }
 
 export class Telegram extends Context.Service<

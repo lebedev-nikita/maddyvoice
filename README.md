@@ -446,9 +446,9 @@ to the model. The second renders 1280×720 PNGs sequentially with headless Chrom
 A thumbnail shows the video's background for the post (`messageId % 12`, ignoring
 attached photos) with an enlarged Telegram voice card in which the quote, set in the
 bundled Oswald font, replaces the post text. The card's waveform is decorative.
-Its avatar is the Telegram channel's current photo, downloaded from
-`https://t.me/<channel>` for every render; while it is unavailable, the render fails
-and is retried. These commands create local files. To update an explicit batch of existing videos,
+Its author line shows the Telegram channel's current title and photo, downloaded from
+`https://t.me/<channel>` for every render; while they are unavailable, the render fails
+and is retried. A long title shrinks, then ends in an ellipsis. These commands create local files. To update an explicit batch of existing videos,
 run `bun run thumbnail:apply --manifest data/thumbnail-batch/manifest.json`.
 The manifest contains `channelId` and `rows` with `jobId`, `video` and `sha256`;
 PNGs live at `images/<video>.png` beside it. The uploader verifies the destination

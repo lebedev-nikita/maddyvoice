@@ -57,11 +57,12 @@ try {
     ["https://cdn4.cdn-telegram.org/blue", await readFile(blue)],
     ["https://cdn4.telesco.pe/avatar", await readFile(red)],
     [emoji, await readFile(blue)],
-    // The thumbnail reads the channel photo from the channel's public page.
+    // The thumbnail reads the channel title and photo from the channel's public page.
     [
       "https://t.me/maddysontg",
       Buffer.from(
-        '<img class="tgme_page_photo_image" src="https://cdn4.telesco.pe/file/photo.jpg">',
+        '<img class="tgme_page_photo_image" src="https://cdn4.telesco.pe/file/photo.jpg">' +
+          '<div class="tgme_page_title"><span>&quot;Maddyson&quot; развлекательный телеграм канал&#33;</span></div>',
       ),
     ],
     ["https://cdn4.telesco.pe/file/photo.jpg", await readFile(lime)],
