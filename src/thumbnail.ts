@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { escapeHtml, openPage } from "./browser.ts";
 import { AppError, attempt, Paths, Settings } from "./core.ts";
 import { listBackgrounds } from "./media.ts";
+import { imageData } from "./post-card.ts";
+import { channelPhoto } from "./telegram.ts";
 
 // YouTube rejects thumbnails with Russian obscenities. Each pattern captures the root;
 // the offset names the root letter replaced by a star.
@@ -91,12 +93,15 @@ function waveform(messageId: number) {
 
 type ThumbnailImages = {
   readonly background: string;
-  readonly logo: string;
+  readonly avatar: string;
   readonly oswald: string;
   readonly roboto: string;
 };
 
-/** The video's scene with its Telegram card enlarged; the quote replaces the post text. */
+/**
+ * The video's scene with its Telegram card enlarged: the channel's Telegram photo, and the
+ * quote in place of the post text.
+ */
 function thumbnailHtml(
   lines: readonly string[],
   recording: ThumbnailRecording,
@@ -127,7 +132,7 @@ html, body { width: 1280px; height: 720px; overflow: hidden; -webkit-font-smooth
 </style></head><body>
 <div class="scene"></div>
 <div class="bubble">
-  <div class="author"><img src="${images.logo}">Мэддисон</div>
+  <div class="author"><img src="${images.avatar}">Мэддисон</div>
   <div class="voice"><div class="play"><svg width="27" height="27" viewBox="0 0 24 24"><path fill="#fff" d="M7 4.5v15l13-7.5z"/></svg></div>
     <div class="wave">${waveform(recording.messageId)}</div></div>
   <div class="quote">${lines.map(escapeHtml).join("<br>")}</div>
@@ -158,6 +163,13 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
   if (!displayQuote || lines.length > 4)
     return yield* new AppError({ message: "Thumbnail requires a short nonempty quote" });
   const backgrounds = yield* listBackgrounds;
+  const { channel } = yield* Settings;
+  // Fetched for every render, so thumbnails follow the channel's current photo.
+  const avatar = yield* attempt("Download Telegram channel photo", async (signal) => {
+    const photo = await imageData([await channelPhoto(channel, signal)], signal);
+    if (!photo) throw new Error("Telegram served no image for the channel photo");
+    return photo;
+  });
   const work = yield* Effect.acquireRelease(
     attempt("Create thumbnail workspace", () => mkdtemp(join(tmpdir(), "maddyvoice-thumbnail-"))),
     (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
@@ -167,7 +179,7 @@ export const renderThumbnail = Effect.fn("renderThumbnail")(function* (
       backgrounds[(recording.scene ?? recording.messageId) % backgrounds.length]!,
       "image/jpeg",
     ),
-    logo: await dataUri(Paths.channelLogo, "image/png"),
+    avatar,
     oswald: await dataUri(Paths.thumbnailFont, "font/ttf"),
     roboto: await dataUri(Paths.cardFont, "font/ttf"),
   }));

@@ -173,7 +173,10 @@ const Geometry = Schema.Struct({
 const imageHosts = /(^|\.)(telesco\.pe|cdn-telegram\.org|telegram\.org|t\.me|cdn\.jsdelivr\.net)$/;
 
 /** First available candidate as a data URI, or "" when every candidate is missing. */
-async function imageData(candidates: readonly string[], signal: AbortSignal): Promise<string> {
+export async function imageData(
+  candidates: readonly string[],
+  signal: AbortSignal,
+): Promise<string> {
   for (const candidate of candidates) {
     const url = new URL(candidate, "https://telegram.org");
     if (url.protocol !== "https:" || !imageHosts.test(url.hostname)) continue;

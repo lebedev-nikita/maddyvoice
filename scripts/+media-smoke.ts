@@ -19,6 +19,7 @@ try {
   const audio = join(directory, "audio.wav");
   const red = join(directory, "red.png");
   const blue = join(directory, "blue.png");
+  const lime = join(directory, "lime.png");
   await exec(ffmpeg, [
     "-nostdin",
     "-v",
@@ -34,6 +35,7 @@ try {
   for (const [color, path] of [
     ["red", red],
     ["blue", blue],
+    ["0x00ff00", lime],
   ] as const) {
     await exec(ffmpeg, [
       "-nostdin",
@@ -55,6 +57,14 @@ try {
     ["https://cdn4.cdn-telegram.org/blue", await readFile(blue)],
     ["https://cdn4.telesco.pe/avatar", await readFile(red)],
     [emoji, await readFile(blue)],
+    // The thumbnail reads the channel photo from the channel's public page.
+    [
+      "https://t.me/maddysontg",
+      Buffer.from(
+        '<img class="tgme_page_photo_image" src="https://cdn4.telesco.pe/file/photo.jpg">',
+      ),
+    ],
+    ["https://cdn4.telesco.pe/file/photo.jpg", await readFile(lime)],
   ]);
   const fakeFetch = Object.assign(
     async (input: string | URL | Request, init?: RequestInit) => {
@@ -63,7 +73,8 @@ try {
       if (url.startsWith("http://127.0.0.1:")) return originalFetch(input, init);
       const data = bytes.get(url);
       assert(data, `Unexpected request ${url}`);
-      return new Response(data, { headers: { "content-type": "image/png" } });
+      const type = url.startsWith("https://t.me/") ? "text/html" : "image/png";
+      return new Response(data, { headers: { "content-type": type } });
     },
     { preconnect: originalFetch.preconnect },
   );
@@ -333,9 +344,10 @@ try {
   assert(image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])));
   assert.equal(image.readUInt32BE(16), 1280);
   assert.equal(image.readUInt32BE(20), 720);
-  // Right padding of the white post card, then the scene behind the portrait's hair.
+  // Right padding of the white post card, the scene behind the portrait's hair, then the
+  // card's left column, where the channel photo sits beside the author's name.
   const thumbnailPixels = await Promise.all(
-    ["crop=1:1:1215:360", "crop=1:1:20:20"].map((crop) =>
+    ["crop=1:1:1215:360", "crop=1:1:20:20", "crop=60:640:700:40"].map((crop) =>
       exec(
         ffmpeg,
         [
@@ -362,8 +374,13 @@ try {
     !thumbnailPixels[1]!.every((channel) => channel > 230),
     "The thumbnail shows the video scene",
   );
+  const column = thumbnailPixels[2]!;
+  const photoPixels = Array.from({ length: column.length / 3 }, (_, index) =>
+    column.slice(index * 3, index * 3 + 3),
+  ).filter(([red, green, blue]) => red! < 40 && green! > 215 && blue! < 40).length;
+  assert(photoPixels > 800, `The thumbnail card shows the channel photo: ${photoPixels} pixels`);
   console.log(
-    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, three-voice episode in one scene, H.264 1080p30 + AAC, full duration, quote thumbnail",
+    "Media smoke passed: full-frame slides, branding, post card with waveform progress, background for long posts, three-voice episode in one scene, H.264 1080p30 + AAC, full duration, quote thumbnail with the channel photo",
   );
 } finally {
   globalThis.fetch = originalFetch;
