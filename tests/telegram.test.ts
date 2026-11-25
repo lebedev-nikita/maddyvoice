@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parsePage } from "../src/telegram.ts";
+import { parseChannelPhoto, parsePage } from "../src/telegram.ts";
 
 const message = (
   content: string,
@@ -79,6 +79,17 @@ describe("public Telegram feed", () => {
     ).toThrow("no downloadable audio");
     expect(() => parsePage("<html>temporarily unavailable</html>", "maddysontg")).toThrow(
       "No messages",
+    );
+  });
+});
+
+describe("public Telegram channel page", () => {
+  it("reads the channel photo and refuses a page without one", () => {
+    const html = `<div class="tgme_page_photo"><a href="https://t.me/maddysontg">
+      <img class="tgme_page_photo_image" src="https://cdn4.telesco.pe/file/photo.jpg"></a></div>`;
+    expect(parseChannelPhoto(html)).toBe("https://cdn4.telesco.pe/file/photo.jpg");
+    expect(() => parseChannelPhoto("<html>temporarily unavailable</html>")).toThrow(
+      "No channel photo",
     );
   });
 });

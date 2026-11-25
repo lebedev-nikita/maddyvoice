@@ -12,13 +12,13 @@ at index `message_id % 12` in file-name order, so adding or removing a file
 changes the rotation for newly rendered videos and thumbnails. The right side
 stays clear for the post card.
 
-`channel-logo.png`: the channel avatar, shown in the thumbnail's voice card. It is
-the left 1080 × 1080 square of `backgrounds/miami-beach.jpg`.
+`channel-logo.png`: the YouTube channel avatar, the left 1080 × 1080 square of
+`backgrounds/miami-beach.jpg`. Thumbnails show the Telegram channel's photo instead.
 
-`channel-banner.jpg`: the 2560 × 1440 channel banner, the same scene with a voice
-card. YouTube shows only its central strip on computers and phones, so the text
-stays there. The code does not use it; the avatar and banner are uploaded in
-YouTube Studio under **Customization → Branding**.
+`channel-banner.jpg`: the 2560 × 1440 YouTube channel banner, the same scene with a
+voice card. YouTube shows only its central strip on computers and phones, so the
+text stays there. The code uses neither file; both are uploaded in YouTube Studio
+under **Customization → Branding**.
 
 `video-overlay.png`: the approved 1920 × 240 transparent lower-edge artwork,
 including a soft shade, monochrome YouTube icon and `@MaddyvoiceArchive` handle.
